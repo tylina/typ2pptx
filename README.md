@@ -13,10 +13,15 @@ This fork also contains `@typ2pptx/core`, a TypeScript conversion and OOXML writ
 browser Worker, Electron renderer, or Node host. It has no Python runtime dependency. A host compiler
 supplies a bounded presentation model derived from the real Typst frame; the portable core owns
 PowerPoint packaging and conversion of supported SVG artwork to native DrawingML.
+Paragraph justification is compiler-owned metadata; the writer does not infer it from whichever
+physical line frames happen to remain after layout.
 
 The portable pipeline currently preserves:
 
 - editable styled and CJK text, multi-run lines, and native super/subscript baseline offsets;
+- compiler-owned paragraph identity, retained line bounds, and exact left/center/right alignment;
+- compiler-owned native paragraph reflow, justification, and consistent exact line spacing without
+  splitting ordinary prose into word-sized objects;
 - simple inline math as Cambria Math text and compiler-identified complex formulas as grouped curves;
 - rectangles, original PNG/JPEG/GIF images, external links, slide links, and speaker notes;
 - SVG paths, lines, polygons, ellipses, solid/linear/radial fills, opacity, strokes, and dash patterns;
@@ -43,10 +48,18 @@ const artifact = await createEditablePptx({
 })
 ```
 
-The existing Python CLI remains supported and is the upstream behavioral reference. The portable core
-is not yet declared fully equivalent: PowerPoint/LibreOffice visual-diff fixtures, paragraph ownership
-and alignment, and arrows/effects remain parity gates. Unsupported content stays visible as a named
-SVG/PNG layer rather than being silently discarded or falsely reported as editable.
+The existing Python CLI remains supported and is the upstream behavioral reference. Tylina's portable
+path does not call it and has no Python runtime dependency. Its model must mark every text run as a
+compiler-owned line/native paragraph box or as explicitly isolated. The portable writer never
+geometry-merges text. Explicit line breaks and complex inline layout stay as line or isolated objects;
+unsupported paint and transforms stay in ordered SVG/PNG layers.
+
+Focused Arial/CJK paragraph, alignment, table, and explicit-spacing fixtures open and render in real
+PowerPoint. The portable core is not yet declared fully equivalent: broad PowerPoint/LibreOffice
+visual-diff fixtures, native-paragraph editing across fonts, indentation, RTL, and arrows/effects
+remain parity gates. Editable output intentionally permits native PowerPoint line reflow; use Visual
+output when pixel fidelity is the primary requirement. Unsupported content stays visible rather than
+being silently discarded or falsely reported as editable.
 
 ## Features
 

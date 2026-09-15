@@ -11,6 +11,7 @@ import type {
   PresentationRectangleElement,
   PresentationSlideLinkElement,
   PresentationTextElement,
+  PresentationTextBox,
   VisualPresentationRequest
 } from './contracts'
 import { patchPresentationArchive, type SlideArchivePatch } from './ooxml/archive'
@@ -24,6 +25,9 @@ const MAX_FALLBACK_LAYERS = 512
 const MAX_VECTOR_INPUT_BYTES = 64 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 const MAX_INTERMEDIATE_BYTES = 128 * 1024 * 1024
+// Desktop PowerPoint places the baseline 0.95 em below a zero-inset text body's
+// top edge. Keep compiler-positioned text anchored to its Typst baseline.
+const POWERPOINT_BASELINE_FROM_TOP_EM = 0.95
 
 type PresentationPaintLayer =
   | PresentationFallbackLayer
@@ -236,13 +240,16 @@ function addEditableText(
   for (const element of elements) validateElementBounds(element)
   const visible = elements.filter((element) => element.text)
   if (visible.length === 0) return
-  const left = Math.min(...visible.map((element) => element.x))
-  const top = Math.min(...visible.map((element) => element.y))
-  const right = Math.max(...visible.map((element) => element.x + element.width))
-  const bottom = Math.max(...visible.map((element) => element.y + element.height))
+  const textBox = compilerOwnedTextBox(visible)
+  const left = textBox?.x ?? Math.min(...visible.map((element) => element.x))
   const line = textLineMetrics(visible)
-  const runs: PptxGenJS.TextProps[] = visible.map((element, index) => ({
-    text: textWithLayoutGap(visible, index),
+  const top = line.baseline - line.fontSize * POWERPOINT_BASELINE_FROM_TOP_EM
+  const right = textBox
+    ? textBox.x + textBox.width
+    : Math.max(...visible.map((element) => element.x + element.width))
+  const bottom = Math.max(...visible.map((element) => element.y + element.height))
+  const runs: PptxGenJS.TextProps[] = visible.map((element) => ({
+    text: element.text,
     options: {
       fontFace: element.fontFamily || 'Arial',
       fontSize: runFontSize(element, line),
@@ -259,46 +266,88 @@ function addEditableText(
     w: toInches(right - left),
     h: toInches(bottom - top),
     margin: 0,
-    fit: 'resize',
+    fit: 'none',
+    wrap: textBox?.reflow === true,
+    ...(textBox ? { align: textBox.alignment } : {}),
+    ...(textBox?.lineSpacing ? { lineSpacing: textBox.lineSpacing } : {}),
     valign: 'top',
     isTextBox: true,
     objectName: 'Editable Typst text'
   })
 }
 
-function textWithLayoutGap(
-  elements: readonly PresentationTextElement[],
-  index: number
-): string {
-  const element = elements[index]!
-  if (index === 0) return element.text
-  const previous = elements[index - 1]!
-  const gap = element.x - (previous.x + previous.width)
-  const averageFontSize = (element.fontSize + previous.fontSize) / 2
-  if (
-    gap > averageFontSize * 0.15 &&
-    !previous.text.endsWith(' ') &&
-    !element.text.startsWith(' ')
-  ) return ` ${element.text}`
-  return element.text
-}
-
 function canShareTextBox(
   current: readonly PresentationTextElement[],
   right: PresentationTextElement
 ): boolean {
-  const proposed = [...current, right]
-  const line = textLineMetrics(proposed)
-  if (!proposed.every((element) => belongsToTextLine(element, line))) return false
+  const compilerBox = current[0]?.textBox
+  return compilerBox !== null &&
+    compilerBox !== undefined &&
+    right.textBox !== null &&
+    right.textBox.id === compilerBox.id
+}
 
-  const currentRight = Math.max(...current.map((element) => element.x + element.width))
-  const horizontalGap = right.x - currentRight
-  const overlapTolerance = Math.max(0.5, line.fontSize * 0.08)
-  const includesScript = proposed.some((element) => isScriptRun(element, line))
-  if (horizontalGap < -overlapTolerance) {
-    if (!includesScript || horizontalGap < -line.fontSize * 1.5) return false
+function compilerOwnedTextBox(
+  elements: readonly PresentationTextElement[]
+): PresentationTextBox | undefined {
+  if (elements.some((element) => !Number.isFinite(element.baseline))) {
+    throw new Error('Compiler-positioned PPTX text requires an exact baseline')
   }
-  return horizontalGap <= line.fontSize * 2
+  const first = elements[0]?.textBox
+  if (first === null) {
+    if (elements.some((element) => element.textBox !== null)) {
+      throw new Error('Compiler-isolated PPTX text runs cannot share a text box')
+    }
+    return undefined
+  }
+  if (first === undefined) {
+    throw new Error('PPTX text requires compiler-owned or isolated text-box metadata')
+  }
+  if (!isValidCompilerTextBox(first)) {
+    throw new Error('Compiler-owned PPTX text box has invalid geometry or identity')
+  }
+  if (elements.some((element) => !sameCompilerTextBox(first, element.textBox))) {
+    throw new Error('Compiler-owned PPTX text box metadata must agree across its runs')
+  }
+  return first
+}
+
+function isValidCompilerTextBox(value: PresentationTextBox): boolean {
+  return value.id.length > 0 &&
+    value.id.length <= 256 &&
+    value.paragraphId.length > 0 &&
+    value.paragraphId.length <= 256 &&
+    Number.isSafeInteger(value.lineIndex) &&
+    value.lineIndex >= 0 &&
+    Number.isFinite(value.x) &&
+    Number.isFinite(value.width) &&
+    value.x >= 0 &&
+    value.width > 0 &&
+    ['left', 'center', 'right', 'justify'].includes(value.alignment) &&
+    typeof value.reflow === 'boolean' &&
+    (value.lineSpacing === undefined || (
+      value.reflow && Number.isFinite(value.lineSpacing) && value.lineSpacing > 0
+    ))
+}
+
+function sameCompilerTextBox(
+  left: PresentationTextBox,
+  right: PresentationTextBox | null | undefined
+): boolean {
+  return right !== null &&
+    right !== undefined &&
+    right.id === left.id &&
+    right.paragraphId === left.paragraphId &&
+    right.lineIndex === left.lineIndex &&
+    approximatelyEqual(right.x, left.x) &&
+    approximatelyEqual(right.width, left.width) &&
+    right.alignment === left.alignment &&
+    right.reflow === left.reflow &&
+    (right.lineSpacing === left.lineSpacing || (
+      right.lineSpacing !== undefined &&
+      left.lineSpacing !== undefined &&
+      approximatelyEqual(right.lineSpacing, left.lineSpacing)
+    ))
 }
 
 interface TextLineMetrics {
@@ -313,15 +362,6 @@ function textLineMetrics(elements: readonly PresentationTextElement[]): TextLine
   const baseline = anchors.reduce((sum, element) => sum + elementBaseline(element), 0) /
     anchors.length
   return { baseline, fontSize }
-}
-
-function belongsToTextLine(
-  element: PresentationTextElement,
-  line: TextLineMetrics
-): boolean {
-  const difference = Math.abs(elementBaseline(element) - line.baseline)
-  if (difference <= Math.max(0.75, line.fontSize * 0.08)) return true
-  return isScriptRun(element, line) && difference < line.fontSize * 0.8
 }
 
 function isScriptRun(
@@ -356,7 +396,7 @@ function runBaseline(
 }
 
 function elementBaseline(element: PresentationTextElement): number {
-  return element.baseline ?? element.y + element.height * 0.8
+  return element.baseline
 }
 
 function addEditableRectangle(
@@ -480,7 +520,10 @@ function assertModelBudget(model: PresentationExportModel): void {
   if (vectorBytes > MAX_VECTOR_INPUT_BYTES) {
     throw new Error('Editable PPTX vector layers exceed the 64 MB input budget')
   }
-  for (const page of model.pages) assertPaintOrder(page)
+  for (const page of model.pages) {
+    assertPaintOrder(page)
+    assertCompilerTextBoxOrder(page)
+  }
 }
 
 function assertPaintOrder(page: PresentationPageModel): void {
@@ -490,6 +533,45 @@ function assertPaintOrder(page: PresentationPageModel): void {
     orders.some((order, index) => order !== index)
   ) {
     throw new Error('Editable PPTX paint order must be unique and contiguous')
+  }
+}
+
+function assertCompilerTextBoxOrder(page: PresentationPageModel): void {
+  const definitions = new Map<string, PresentationTextBox>()
+  const closed = new Set<string>()
+  let active: string | undefined
+  for (const layer of orderedPaintLayers(page)) {
+    if (layer.kind !== 'text' || !layer.textBox) {
+      if (active) closed.add(active)
+      active = undefined
+      continue
+    }
+    const textBox = layer.textBox
+    if (
+      !isValidCompilerTextBox(textBox) ||
+      textBox.x + textBox.width > page.width + 0.01
+    ) {
+      throw new Error('Compiler-owned PPTX text box has invalid geometry or identity')
+    }
+    const opticalTolerance = Math.max(0.01, layer.fontSize * 0.5)
+    if (
+      layer.x < textBox.x - opticalTolerance ||
+      layer.x + layer.width > textBox.x + textBox.width + opticalTolerance
+    ) {
+      throw new Error('PPTX text run is outside its compiler-owned text box')
+    }
+    const existing = definitions.get(textBox.id)
+    if (existing && !sameCompilerTextBox(existing, textBox)) {
+      throw new Error('Compiler-owned PPTX text box metadata must agree across its runs')
+    }
+    definitions.set(textBox.id, textBox)
+    if (textBox.id !== active) {
+      if (closed.has(textBox.id)) {
+        throw new Error('Compiler-owned PPTX text box runs must be contiguous')
+      }
+      if (active) closed.add(active)
+      active = textBox.id
+    }
   }
 }
 

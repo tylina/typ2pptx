@@ -8,10 +8,26 @@ export interface PresentationTextElement {
   text: string
   fontFamily: string
   fontSize: number
-  baseline?: number
+  baseline: number
   color: string
   bold: boolean
   italic: boolean
+  /**
+   * A compiler-owned line or paragraph box, or `null` when the compiler
+   * requires this run to stay isolated.
+   */
+  textBox: PresentationTextBox | null
+}
+
+export interface PresentationTextBox {
+  id: string
+  paragraphId: string
+  lineIndex: number
+  x: number
+  width: number
+  alignment: 'left' | 'center' | 'right' | 'justify'
+  reflow: boolean
+  lineSpacing?: number
 }
 
 export interface PresentationLinkElement {

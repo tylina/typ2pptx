@@ -7,6 +7,47 @@
 
 Convert [Typst](https://typst.app/) presentations (using the [Touying](https://github.com/touying-typ/touying) framework) to editable PowerPoint (.pptx) files.
 
+## Portable Web core (Tylina fork)
+
+This fork also contains `@typ2pptx/core`, a TypeScript conversion and OOXML writer that runs in a
+browser Worker, Electron renderer, or Node host. It has no Python runtime dependency. A host compiler
+supplies a bounded presentation model derived from the real Typst frame; the portable core owns
+PowerPoint packaging and conversion of supported SVG artwork to native DrawingML.
+
+The portable pipeline currently preserves:
+
+- editable styled and CJK text, multi-run lines, and native super/subscript baseline offsets;
+- simple inline math as Cambria Math text and compiler-identified complex formulas as grouped curves;
+- rectangles, original PNG/JPEG/GIF images, external links, slide links, and speaker notes;
+- SVG paths, lines, polygons, ellipses, solid/linear/radial fills, opacity, strokes, and dash patterns;
+- original SVG paint order through alternating native DrawingML and residual SVG layers;
+- an SVG source plus a PNG compatibility image for each residual layer.
+
+Tylina uses Rust/WASM `resvg` for deterministic residual PNGs in Web Workers. The standalone core also
+supports browser canvas and the optional Rust-backed `@napi-rs/canvas` package in Node. This prevents
+older Office clients from drawing converted shapes twice when they select the PNG compatibility image.
+
+```ts
+import {
+  createEditablePptx,
+  createResvgWasmRasterizer,
+  type PresentationExportModel
+} from '@typ2pptx/core'
+
+const model: PresentationExportModel = await compileWithYourTypstHost()
+const artifact = await createEditablePptx({
+  title: 'Results',
+  model,
+  residualSvgRasterizer: createResvgWasmRasterizer(resvgWasmUrl)
+})
+```
+
+The existing Python CLI remains supported and is the upstream behavioral reference. The portable core
+is not yet declared fully equivalent: PowerPoint/LibreOffice visual-diff fixtures, paragraph ownership
+and alignment, arrows/effects, and exact interleaving of compiler-extracted objects with background
+layers remain parity gates. Unsupported content stays visible as a named SVG/PNG layer rather than
+being silently discarded or falsely reported as editable.
+
 ## Features
 
 - **Editable text**: All text is extracted as editable, selectable, copyable PowerPoint text (not rasterized images)
@@ -235,6 +276,14 @@ typ2pptx    -->  PowerPoint (.pptx)
 
 ## Development
 
+### Portable core
+
+```bash
+pnpm install
+pnpm typecheck
+pnpm test
+```
+
 ### Install in editable/development mode
 
 ```bash
@@ -301,6 +350,11 @@ pytest tests/test_code_blocks.py -v
 
 ```
 typ2pptx/
+  src/                    # Portable TypeScript/Worker/Node conversion core
+    presentation.ts       # Presentation model -> PPTX writer
+    svg/                  # SVG path, style, layering, and raster adapters
+    ooxml/                # Namespace-aware PPTX archive patches
+  tests-js/               # Portable core regression tests
   core/
     converter.py          # Main SVG -> PPTX conversion logic
     typst_svg_parser.py   # typst.ts SVG parsing and text extraction

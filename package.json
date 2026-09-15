@@ -1,0 +1,37 @@
+{
+  "name": "@typ2pptx/core",
+  "version": "0.3.0-alpha.1",
+  "description": "Portable Typst and SVG to editable PowerPoint conversion core.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./path": "./src/svg/path.ts",
+    "./svg": "./src/svg/converter.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run tests-js"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "0.9.12",
+    "@resvg/resvg-wasm": "2.6.2",
+    "fflate": "0.8.3",
+    "pptxgenjs": "4.0.1"
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas": "1.0.9"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.9"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ]
+}

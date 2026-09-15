@@ -1,0 +1,132 @@
+export interface PresentationTextElement {
+  kind: 'text'
+  x: number
+  y: number
+  width: number
+  height: number
+  text: string
+  fontFamily: string
+  fontSize: number
+  baseline?: number
+  color: string
+  bold: boolean
+  italic: boolean
+}
+
+export interface PresentationLinkElement {
+  kind: 'link'
+  x: number
+  y: number
+  width: number
+  height: number
+  url: string
+}
+
+export interface PresentationSlideLinkElement {
+  kind: 'slideLink'
+  x: number
+  y: number
+  width: number
+  height: number
+  pageIndex: number
+}
+
+export interface PresentationRectangleElement {
+  kind: 'rectangle'
+  x: number
+  y: number
+  width: number
+  height: number
+  fillColor: string
+}
+
+export interface PresentationImageElement {
+  kind: 'image'
+  x: number
+  y: number
+  width: number
+  height: number
+  mediaType: 'image/png' | 'image/jpeg' | 'image/gif'
+  dataBase64: string
+  altText: string
+}
+
+export type PresentationEditableElement =
+  | PresentationTextElement
+  | PresentationRectangleElement
+  | PresentationImageElement
+  | PresentationLinkElement
+  | PresentationSlideLinkElement
+
+export interface PresentationVectorGroup {
+  id: string
+  kind: 'math'
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface PresentationPageModel {
+  pageIndex: number
+  width: number
+  height: number
+  nonTextSvg: string
+  nonTextPngBase64: string
+  elements: PresentationEditableElement[]
+  vectorGroups?: PresentationVectorGroup[]
+  fallbackTextCount: number
+  fallbackShapeCount: number
+}
+
+export interface PresentationExportModel {
+  pages: PresentationPageModel[]
+  fonts: string[]
+  editableTextCount: number
+  editableShapeCount: number
+  fallbackTextCount: number
+  fallbackShapeCount: number
+  warnings: string[]
+}
+
+export interface VisualPresentationPage {
+  pageIndex: number
+  width: number
+  height: number
+  pngBase64: string
+}
+
+export interface PresentationArtifact {
+  bytes: Uint8Array<ArrayBuffer>
+  pageCount: number
+  editableTextCount: number
+  editableShapeCount: number
+  editableLinkCount: number
+  fallbackTextCount: number
+  fallbackShapeCount: number
+  nativeVectorShapeCount: number
+  warnings: string[]
+}
+
+export interface VisualPresentationRequest {
+  title: string
+  pages: VisualPresentationPage[]
+  notesByPageIndex?: ReadonlyMap<number, string>
+}
+
+export interface EditablePresentationRequest {
+  title: string
+  model: PresentationExportModel
+  notesByPageIndex?: ReadonlyMap<number, string>
+  residualSvgRasterizer?: ResidualSvgRasterizer
+}
+
+export interface ResidualSvgRasterizationRequest {
+  svg: string
+  width: number
+  height: number
+}
+
+export type ResidualSvgRasterizer = (
+  request: ResidualSvgRasterizationRequest
+) => Promise<string>

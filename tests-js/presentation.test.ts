@@ -331,6 +331,7 @@ describe('browser-compatible editable presentation writer', () => {
     expect(slide).toContain('i="1"')
     expect(slide).toContain('123456')
     expect(slide).toContain('654321')
+    expect(slide.match(/<a:pPr /gu)).toHaveLength(1)
     expect(result.editableTextCount).toBe(2)
   })
 
@@ -444,6 +445,81 @@ describe('browser-compatible editable presentation writer', () => {
     const justifiedSlide = strFromU8(unzipSync(justified.bytes)['ppt/slides/slide1.xml'])
     expect(justifiedSlide).toContain('<a:pPr algn="just"')
     expect(justifiedSlide).not.toContain('<a:br/>')
+  })
+
+  test('keeps proven physical lines in one fixed-layout paragraph object', async () => {
+    const firstLine = {
+      id: 'paragraph-fixed-line-0', paragraphId: 'paragraph-fixed', lineIndex: 0,
+      x: 12, width: 216, alignment: 'left' as const, reflow: false
+    }
+    const secondLine = { ...firstLine, id: 'paragraph-fixed-line-1', lineIndex: 1 }
+    const result = await createEditablePptx({
+      title: 'Compiler-owned fixed lines',
+      model: {
+        pages: [{
+          pageIndex: 0, width: 240, height: 135, fallbackLayers: [],
+          elements: [{
+            kind: 'text', paintOrder: 0, x: 12, y: 30, width: 42, height: 18, baseline: 44,
+            text: 'First ', fontFamily: 'Aptos', fontSize: 16,
+            color: '#123456', bold: false, italic: false, textBox: firstLine
+          }, {
+            kind: 'text', paintOrder: 1, x: 54, y: 30, width: 70, height: 18, baseline: 44,
+            text: 'styled line', fontFamily: 'Aptos', fontSize: 16,
+            color: '#654321', bold: true, italic: false, textBox: firstLine
+          }, {
+            kind: 'text', paintOrder: 2, x: 12, y: 50, width: 150, height: 18, baseline: 64,
+            text: 'Second compiler line', fontFamily: 'Aptos', fontSize: 16,
+            color: '#123456', bold: false, italic: false, textBox: secondLine
+          }],
+          fallbackTextCount: 0, fallbackShapeCount: 0
+        }],
+        fonts: ['Aptos'], editableTextCount: 3, editableShapeCount: 0,
+        fallbackTextCount: 0, fallbackShapeCount: 0, warnings: []
+      }
+    })
+    const slide = strFromU8(unzipSync(result.bytes)['ppt/slides/slide1.xml'])
+
+    expect(slide.match(/Editable Typst text/gu)).toHaveLength(1)
+    expect(slide).toContain('<a:br/>')
+    expect(slide.match(/<a:pPr /gu)).toHaveLength(1)
+    expect(slide).toContain('<a:spcPts val="2000"')
+    expect(slide).toContain('<a:bodyPr wrap="none"')
+    expect(slide).toContain('<a:t>Second compiler line</a:t>')
+  })
+
+  test('keeps unequal indented line boxes independent', async () => {
+    const result = await createEditablePptx({
+      title: 'Indented compiler lines',
+      model: {
+        pages: [{
+          pageIndex: 0, width: 240, height: 135, fallbackLayers: [],
+          elements: [{
+            kind: 'text', paintOrder: 0, x: 30, y: 30, width: 150, height: 18, baseline: 44,
+            text: 'Indented first line', fontFamily: 'Aptos', fontSize: 16,
+            color: '#123456', bold: false, italic: false,
+            textBox: {
+              id: 'paragraph-indent-line-0', paragraphId: 'paragraph-indent', lineIndex: 0,
+              x: 30, width: 198, alignment: 'left', reflow: false
+            }
+          }, {
+            kind: 'text', paintOrder: 1, x: 12, y: 50, width: 170, height: 18, baseline: 64,
+            text: 'Unindented second line', fontFamily: 'Aptos', fontSize: 16,
+            color: '#123456', bold: false, italic: false,
+            textBox: {
+              id: 'paragraph-indent-line-1', paragraphId: 'paragraph-indent', lineIndex: 1,
+              x: 12, width: 216, alignment: 'left', reflow: false
+            }
+          }],
+          fallbackTextCount: 0, fallbackShapeCount: 0
+        }],
+        fonts: ['Aptos'], editableTextCount: 2, editableShapeCount: 0,
+        fallbackTextCount: 0, fallbackShapeCount: 0, warnings: []
+      }
+    })
+    const slide = strFromU8(unzipSync(result.bytes)['ppt/slides/slide1.xml'])
+
+    expect(slide.match(/Editable Typst text/gu)).toHaveLength(2)
+    expect(slide).not.toContain('<a:br/>')
   })
 
   test('keeps a compiler-owned paragraph coherent and natively reflowable', async () => {

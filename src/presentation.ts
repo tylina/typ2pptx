@@ -84,7 +84,7 @@ export async function createEditablePptx(
         while (
           paintOffset + 1 < paintLayers.length &&
           paintLayers[paintOffset + 1]?.kind === 'text' &&
-          canShareTextBox(runs, paintLayers[paintOffset + 1] as PresentationTextElement)
+          canShareTextContainer(runs, paintLayers[paintOffset + 1] as PresentationTextElement)
         ) {
           runs.push(paintLayers[paintOffset + 1] as PresentationTextElement)
           paintOffset += 1
@@ -240,26 +240,35 @@ function addEditableText(
   for (const element of elements) validateElementBounds(element)
   const visible = elements.filter((element) => element.text)
   if (visible.length === 0) return
-  const textBox = compilerOwnedTextBox(visible)
-  const left = textBox?.x ?? Math.min(...visible.map((element) => element.x))
-  const line = textLineMetrics(visible)
-  const top = line.baseline - line.fontSize * POWERPOINT_BASELINE_FROM_TOP_EM
-  const right = textBox
-    ? textBox.x + textBox.width
+  const lines = compilerTextLines(visible)
+  const fixed = lines.length > 1 ? fixedLineContainer(lines) : undefined
+  if (lines.length > 1 && !fixed) {
+    for (const line of lines) addEditableText(slide, line.elements)
+    return
+  }
+  const textBox = lines.length === 1 ? lines[0]!.textBox : undefined
+  const container = fixed ?? textBox
+  const left = container?.x ?? Math.min(...visible.map((element) => element.x))
+  const firstLine = lines[0]!.metrics
+  const top = firstLine.baseline - firstLine.fontSize * POWERPOINT_BASELINE_FROM_TOP_EM
+  const right = container
+    ? container.x + container.width
     : Math.max(...visible.map((element) => element.x + element.width))
   const bottom = Math.max(...visible.map((element) => element.y + element.height))
-  const runs: PptxGenJS.TextProps[] = visible.map((element) => ({
-    text: element.text,
-    options: {
-      fontFace: element.fontFamily || 'Arial',
-      fontSize: runFontSize(element, line),
-      color: cleanHexColor(element.color),
-      bold: element.bold,
-      italic: element.italic,
-      baseline: runBaseline(element, line),
-      breakLine: false
-    }
-  }))
+  const runs: PptxGenJS.TextProps[] = lines.flatMap((line, lineIndex) =>
+    line.elements.map((element, runIndex) => ({
+      text: element.text,
+      options: {
+        fontFace: element.fontFamily || 'Arial',
+        fontSize: runFontSize(element, line.metrics),
+        color: cleanHexColor(element.color),
+        bold: element.bold,
+        italic: element.italic,
+        baseline: runBaseline(element, line.metrics),
+        softBreakBefore: lineIndex > 0 && runIndex === 0,
+        breakLine: false
+      }
+    })))
   slide.addText(runs, {
     x: toInches(left),
     y: toInches(top),
@@ -268,23 +277,112 @@ function addEditableText(
     margin: 0,
     fit: 'none',
     wrap: textBox?.reflow === true,
-    ...(textBox ? { align: textBox.alignment } : {}),
-    ...(textBox?.lineSpacing ? { lineSpacing: textBox.lineSpacing } : {}),
+    ...(container ? { align: container.alignment } : {}),
+    ...(fixed?.lineSpacing || textBox?.lineSpacing
+      ? { lineSpacing: fixed?.lineSpacing ?? textBox?.lineSpacing }
+      : {}),
     valign: 'top',
     isTextBox: true,
     objectName: 'Editable Typst text'
   })
 }
 
-function canShareTextBox(
+function canShareTextContainer(
   current: readonly PresentationTextElement[],
   right: PresentationTextElement
 ): boolean {
-  const compilerBox = current[0]?.textBox
-  return compilerBox !== null &&
-    compilerBox !== undefined &&
-    right.textBox !== null &&
-    right.textBox.id === compilerBox.id
+  const first = current[0]?.textBox
+  const previous = current[current.length - 1]?.textBox
+  const next = right.textBox
+  if (!first || !previous || !next) return false
+  if (next.id === previous.id) return true
+  return !first.reflow &&
+    !previous.reflow &&
+    !next.reflow &&
+    next.paragraphId === first.paragraphId &&
+    next.lineIndex === previous.lineIndex + 1 &&
+    approximatelyEqual(next.x, first.x) &&
+    approximatelyEqual(next.width, first.width) &&
+    compatibleFixedLineAlignments([...current.map((element) => element.textBox!.alignment),
+      next.alignment])
+}
+
+interface CompilerTextLine {
+  elements: PresentationTextElement[]
+  textBox: PresentationTextBox | undefined
+  metrics: TextLineMetrics
+}
+
+interface FixedLineContainer {
+  x: number
+  width: number
+  alignment: PresentationTextBox['alignment']
+  lineSpacing: number
+}
+
+function compilerTextLines(elements: readonly PresentationTextElement[]): CompilerTextLine[] {
+  const groups: PresentationTextElement[][] = []
+  for (const element of elements) {
+    const previous = groups[groups.length - 1]
+    if (
+      previous &&
+      element.textBox !== null &&
+      previous[0]?.textBox?.id === element.textBox.id
+    ) previous.push(element)
+    else groups.push([element])
+  }
+  return groups.map((line) => ({
+    elements: line,
+    textBox: compilerOwnedTextBox(line),
+    metrics: textLineMetrics(line)
+  }))
+}
+
+function fixedLineContainer(lines: readonly CompilerTextLine[]): FixedLineContainer | undefined {
+  const boxes = lines.map((line) => line.textBox)
+  const first = boxes[0]
+  if (
+    !first ||
+    first.reflow ||
+    boxes.some((box, index) =>
+      !box ||
+      box.reflow ||
+      box.paragraphId !== first.paragraphId ||
+      box.lineIndex !== first.lineIndex + index ||
+      !approximatelyEqual(box.x, first.x) ||
+      !approximatelyEqual(box.width, first.width))
+  ) return undefined
+  const alignments = boxes.map((box) => box!.alignment)
+  if (!compatibleFixedLineAlignments(alignments)) return undefined
+  const lineSpacing = consistentLineSpacing(lines.map((line) => line.metrics.baseline))
+  if (lineSpacing === undefined) return undefined
+  return {
+    x: first.x,
+    width: first.width,
+    alignment: alignments.includes('justify') ? 'justify' : alignments[0]!,
+    lineSpacing
+  }
+}
+
+function compatibleFixedLineAlignments(
+  alignments: readonly PresentationTextBox['alignment'][]
+): boolean {
+  const first = alignments[0]
+  return first !== undefined && (
+    alignments.every((alignment) => alignment === first) ||
+    alignments.every((alignment) => alignment === 'left' || alignment === 'justify')
+  )
+}
+
+function consistentLineSpacing(baselines: readonly number[]): number | undefined {
+  if (baselines.length < 2) return undefined
+  const deltas = baselines.slice(1).map((baseline, index) => baseline - baselines[index]!)
+  if (deltas.some((delta) => !Number.isFinite(delta) || delta <= 0)) return undefined
+  const average = deltas.reduce((sum, delta) => sum + delta, 0) / deltas.length
+  const tolerance = Math.max(0.05, average * 0.01)
+  return deltas.every((delta) => Math.abs(delta - average) <= tolerance)
+    ? average
+    : undefined
 }
 
 function compilerOwnedTextBox(

@@ -24,8 +24,9 @@ export interface SlideArchivePatch {
  * Add browser-generated DrawingML and Office SVG fallbacks to a PptxGenJS archive.
  *
  * PptxGenJS supplies package structure, editable text, links, and notes. This
- * final archive pass owns only the features that its public browser API cannot
- * express: arbitrary custom geometry and a compiler-supplied SVG image source.
+ * final archive pass owns the features that its public browser API cannot
+ * express, plus normalization of the repeated paragraph-property nodes it
+ * emits for styled runs and soft line breaks.
  */
 export function patchPresentationArchive(
   pptxBytes: Uint8Array<ArrayBuffer>,
@@ -54,7 +55,37 @@ function patchSlide(
   for (const layer of patch.residualLayers) {
     embedResidualSvg(files, slide, slidePath, patch.slideNumber, layer)
   }
+  normalizeEditableTextParagraphs(slide)
   files[slidePath] = strToU8(new XMLSerializer().serializeToString(slide))
+}
+
+function normalizeEditableTextParagraphs(slide: XmlDocument): void {
+  const shapes = slide.getElementsByTagNameNS(PRESENTATION_NS, 'sp')
+  for (let shapeIndex = 0; shapeIndex < shapes.length; shapeIndex += 1) {
+    const shape = shapes.item(shapeIndex)
+    if (!shape || !hasObjectName(shape, 'Editable Typst text')) continue
+    const paragraphs = shape.getElementsByTagNameNS(DRAWING_NS, 'p')
+    for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
+      const paragraph = paragraphs.item(paragraphIndex)
+      if (paragraph) removeRepeatedParagraphProperties(paragraph)
+    }
+  }
+}
+
+function removeRepeatedParagraphProperties(paragraph: XmlElement): void {
+  let foundProperties = false
+  for (let index = 0; index < paragraph.childNodes.length;) {
+    const child = paragraph.childNodes.item(index)
+    const isParagraphProperties = child?.nodeType === 1 &&
+      child.namespaceURI === DRAWING_NS &&
+      child.localName === 'pPr'
+    if (!isParagraphProperties || !foundProperties) {
+      foundProperties ||= isParagraphProperties
+      index += 1
+      continue
+    }
+    paragraph.removeChild(child)
+  }
 }
 
 function replaceVectorAnchor(
@@ -167,12 +198,17 @@ function findObjectByName(
   for (let index = 0; index < objects.length; index += 1) {
     const object = objects.item(index)
     if (!object) continue
-    const properties = object.getElementsByTagNameNS(PRESENTATION_NS, 'cNvPr')
-    for (let propertyIndex = 0; propertyIndex < properties.length; propertyIndex += 1) {
-      if (properties.item(propertyIndex)?.getAttribute('name') === name) return object
-    }
+    if (hasObjectName(object, name)) return object
   }
   throw new Error(`PPTX slide is missing its ${label}: ${name}`)
+}
+
+function hasObjectName(object: XmlElement, name: string): boolean {
+  const properties = object.getElementsByTagNameNS(PRESENTATION_NS, 'cNvPr')
+  for (let index = 0; index < properties.length; index += 1) {
+    if (properties.item(index)?.getAttribute('name') === name) return true
+  }
+  return false
 }
 
 function nextRelationshipId(document: XmlDocument): string {

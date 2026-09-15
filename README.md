@@ -22,6 +22,10 @@ The portable pipeline currently preserves:
 - compiler-owned paragraph identity, retained line bounds, and exact left/center/right alignment;
 - compiler-owned native paragraph reflow, justification, and consistent exact line spacing without
   splitting ordinary prose into word-sized objects;
+- compiler-owned fixed physical lines in one wrap-disabled text box, with native soft breaks and
+  exact baseline spacing when paragraph identity, line order, bounds, and alignment all agree;
+- namespace-aware normalization that keeps one DrawingML paragraph-properties node for styled runs
+  and soft line breaks instead of relying on PowerPoint's repair tolerance;
 - simple inline math as Cambria Math text and compiler-identified complex formulas as grouped curves;
 - rectangles, original PNG/JPEG/GIF images, external links, slide links, and speaker notes;
 - SVG paths, lines, polygons, ellipses, solid/linear/radial fills, opacity, strokes, and dash patterns;
@@ -51,15 +55,16 @@ const artifact = await createEditablePptx({
 The existing Python CLI remains supported and is the upstream behavioral reference. Tylina's portable
 path does not call it and has no Python runtime dependency. Its model must mark every text run as a
 compiler-owned line/native paragraph box or as explicitly isolated. The portable writer never
-geometry-merges text. Explicit line breaks and complex inline layout stay as line or isolated objects;
-unsupported paint and transforms stay in ordered SVG/PNG layers.
+geometry-merges text. Proven consecutive fixed lines may share one text box without becoming
+reflowable; unequal indentation, bounds, spacing, or alignment keeps them as independent line or
+isolated objects. Unsupported paint and transforms stay in ordered SVG/PNG layers.
 
-Focused Arial/CJK paragraph, alignment, table, and explicit-spacing fixtures open and render in real
-PowerPoint. The portable core is not yet declared fully equivalent: broad PowerPoint/LibreOffice
-visual-diff fixtures, native-paragraph editing across fonts, indentation, RTL, and arrows/effects
-remain parity gates. Editable output intentionally permits native PowerPoint line reflow; use Visual
-output when pixel fidelity is the primary requirement. Unsupported content stays visible rather than
-being silently discarded or falsely reported as editable.
+Focused Arial/CJK paragraph, alignment, table, explicit-spacing, and fixed-line fixtures open and
+render in real PowerPoint. The portable core is not yet declared fully equivalent: broad
+PowerPoint/LibreOffice visual-diff fixtures, native-paragraph editing across fonts, indentation, RTL,
+and arrows/effects remain parity gates. Editable output intentionally permits native PowerPoint line
+reflow; use Visual output when pixel fidelity is the primary requirement. Unsupported content stays
+visible rather than being silently discarded or falsely reported as editable.
 
 ## Features
 

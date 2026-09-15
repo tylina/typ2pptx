@@ -1,5 +1,6 @@
 export interface PresentationTextElement {
   kind: 'text'
+  paintOrder: number
   x: number
   y: number
   width: number
@@ -33,6 +34,7 @@ export interface PresentationSlideLinkElement {
 
 export interface PresentationRectangleElement {
   kind: 'rectangle'
+  paintOrder: number
   x: number
   y: number
   width: number
@@ -42,6 +44,7 @@ export interface PresentationRectangleElement {
 
 export interface PresentationImageElement {
   kind: 'image'
+  paintOrder: number
   x: number
   y: number
   width: number
@@ -67,12 +70,17 @@ export interface PresentationVectorGroup {
   height: number
 }
 
+export interface PresentationFallbackLayer {
+  kind: 'fallback'
+  paintOrder: number
+  svg: string
+}
+
 export interface PresentationPageModel {
   pageIndex: number
   width: number
   height: number
-  nonTextSvg: string
-  nonTextPngBase64: string
+  fallbackLayers: PresentationFallbackLayer[]
   elements: PresentationEditableElement[]
   vectorGroups?: PresentationVectorGroup[]
   fallbackTextCount: number

@@ -15,17 +15,17 @@ describe('browser-compatible editable presentation writer', () => {
         pageIndex: 0,
         width: 960,
         height: 540,
-        nonTextSvg: `
+        fallbackLayers: [{ kind: 'fallback', paintOrder: 0, svg: `
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540">
             <path d="M10 10 L30 10 L30 30 Z" fill="#112233"/>
             <path d="M40 10 L60 10 L60 30 Z" fill="#445566" filter="url(#shadow)"/>
           </svg>
-        `,
-        nonTextPngBase64: PNG_1X1,
+        ` }],
         elements: [{
-          kind: 'rectangle', x: 70, y: 10, width: 40, height: 20, fillColor: '#abcdef'
+          kind: 'rectangle', paintOrder: 1,
+          x: 70, y: 10, width: 40, height: 20, fillColor: '#abcdef'
         }, {
-          kind: 'text', x: 70, y: 40, width: 220, height: 40,
+          kind: 'text', paintOrder: 2, x: 70, y: 40, width: 220, height: 40,
           text: 'Editable evidence', fontFamily: 'Aptos', fontSize: 20,
           color: '#123456', bold: true, italic: false
         }, {
@@ -40,8 +40,7 @@ describe('browser-compatible editable presentation writer', () => {
         pageIndex: 1,
         width: 960,
         height: 540,
-        nonTextSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540"/>',
-        nonTextPngBase64: PNG_1X1,
+        fallbackLayers: [],
         elements: [],
         fallbackTextCount: 0,
         fallbackShapeCount: 0
@@ -109,8 +108,10 @@ describe('browser-compatible editable presentation writer', () => {
           pageIndex: 0,
           width: 100,
           height: 60,
-          nonTextSvg: '<svg xmlns="http://www.w3.org/2000/svg"><circle cx="20" cy="20" r="10"/></svg>',
-          nonTextPngBase64: PNG_1X1,
+          fallbackLayers: [{
+            kind: 'fallback', paintOrder: 0,
+            svg: '<svg xmlns="http://www.w3.org/2000/svg"><circle cx="20" cy="20" r="10"/></svg>'
+          }],
           elements: [],
           fallbackTextCount: 0,
           fallbackShapeCount: 1
@@ -140,12 +141,11 @@ describe('browser-compatible editable presentation writer', () => {
           pageIndex: 0,
           width: 100,
           height: 60,
-          nonTextSvg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+          fallbackLayers: [{ kind: 'fallback', paintOrder: 0, svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
             <path d="M0 0 L20 0 L20 20 Z" fill="#aa0000" filter="url(#shadow)"/>
             <path d="M30 0 L50 0 L50 20 Z" fill="#00aa00"/>
             <path d="M60 0 L80 0 L80 20 Z" fill="#0000aa" clip-path="url(#clip)"/>
-          </svg>`,
-          nonTextPngBase64: PNG_1X1,
+          </svg>` }],
           elements: [],
           fallbackTextCount: 0,
           fallbackShapeCount: 3
@@ -171,6 +171,57 @@ describe('browser-compatible editable presentation writer', () => {
     expect(strFromU8(files['ppt/media/typ2pptx-residual-1-3.svg'])).toContain('#0000aa')
   })
 
+  test('interleaves compiler fallback layers and editable objects by paint order', async () => {
+    const result = await createEditablePptx({
+      title: 'Compiler paint order',
+      residualSvgRasterizer: async () => PNG_1X1_ALT,
+      model: {
+        pages: [{
+          pageIndex: 0,
+          width: 100,
+          height: 60,
+          fallbackLayers: [{
+            kind: 'fallback', paintOrder: 0,
+            svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+              <path d="M0 0 L20 0 L20 20 Z" fill="#aa0000" filter="url(#shadow)"/>
+            </svg>`
+          }, {
+            kind: 'fallback', paintOrder: 2,
+            svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+              <path d="M30 0 L50 0 L50 20 Z" fill="#00aa00"/>
+            </svg>`
+          }],
+          elements: [{
+            kind: 'text', paintOrder: 1, x: 10, y: 25, width: 50, height: 15,
+            text: 'Between layers', fontFamily: 'Aptos', fontSize: 12,
+            color: '#000000', bold: false, italic: false
+          }, {
+            kind: 'rectangle', paintOrder: 3,
+            x: 60, y: 25, width: 20, height: 15, fillColor: '#abcdef'
+          }],
+          fallbackTextCount: 0,
+          fallbackShapeCount: 2
+        }],
+        fonts: ['Aptos'],
+        editableTextCount: 1,
+        editableShapeCount: 1,
+        fallbackTextCount: 0,
+        fallbackShapeCount: 2,
+        warnings: []
+      }
+    })
+    const slide = strFromU8(unzipSync(result.bytes)['ppt/slides/slide1.xml'])
+    const residual = slide.indexOf('typ2pptx residual layer 1.1')
+    const text = slide.indexOf('Between layers')
+    const native = slide.indexOf('SVG path')
+    const rectangle = slide.indexOf('Editable Typst rectangle')
+
+    expect(residual).toBeGreaterThan(0)
+    expect(text).toBeGreaterThan(residual)
+    expect(native).toBeGreaterThan(text)
+    expect(rectangle).toBeGreaterThan(native)
+  })
+
   test('keeps compiler-rendered images as independently editable pictures', async () => {
     const result = await createEditablePptx({
       title: 'Image deck',
@@ -179,10 +230,9 @@ describe('browser-compatible editable presentation writer', () => {
           pageIndex: 0,
           width: 100,
           height: 60,
-          nonTextSvg: '<svg xmlns="http://www.w3.org/2000/svg"/>',
-          nonTextPngBase64: PNG_1X1,
+          fallbackLayers: [],
           elements: [{
-            kind: 'image', x: 10, y: 8, width: 30, height: 20,
+            kind: 'image', paintOrder: 0, x: 10, y: 8, width: 30, height: 20,
             mediaType: 'image/png', dataBase64: PNG_1X1, altText: 'A measured result'
           }],
           fallbackTextCount: 0,
@@ -215,10 +265,9 @@ describe('browser-compatible editable presentation writer', () => {
           pageIndex: 0,
           width: 100,
           height: 60,
-          nonTextSvg: '<svg xmlns="http://www.w3.org/2000/svg"/>',
-          nonTextPngBase64: PNG_1X1,
+          fallbackLayers: [],
           elements: [{
-            kind: 'image', x: 10, y: 8, width: 30, height: 20,
+            kind: 'image', paintOrder: 0, x: 10, y: 8, width: 30, height: 20,
             mediaType: 'image/jpeg', dataBase64: '/9j/2Q==', altText: 'Original JPEG'
           }],
           fallbackTextCount: 0,
@@ -248,14 +297,13 @@ describe('browser-compatible editable presentation writer', () => {
           pageIndex: 0,
           width: 240,
           height: 135,
-          nonTextSvg: '<svg xmlns="http://www.w3.org/2000/svg"/>',
-          nonTextPngBase64: PNG_1X1,
+          fallbackLayers: [],
           elements: [{
-            kind: 'text', x: 20, y: 30, width: 58, height: 18, baseline: 44,
+            kind: 'text', paintOrder: 0, x: 20, y: 30, width: 58, height: 18, baseline: 44,
             text: 'Evidence ', fontFamily: 'Aptos', fontSize: 16,
             color: '#123456', bold: false, italic: false
           }, {
-            kind: 'text', x: 78, y: 30, width: 52, height: 18, baseline: 44,
+            kind: 'text', paintOrder: 1, x: 78, y: 30, width: 52, height: 18, baseline: 44,
             text: 'matters', fontFamily: 'Aptos', fontSize: 16,
             color: '#654321', bold: true, italic: true
           }],
@@ -290,38 +338,37 @@ describe('browser-compatible editable presentation writer', () => {
           pageIndex: 0,
           width: 240,
           height: 135,
-          nonTextSvg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 135">
+          fallbackLayers: [{ kind: 'fallback', paintOrder: 7, svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 135">
             <defs><symbol id="glyph"><path d="M0 0 L6 0 L6 8 L0 8 Z"/></symbol></defs>
             <g transform="translate(170 80)"><use href="#glyph"/></g>
             <g transform="translate(180 80)"><use href="#glyph"/></g>
-          </svg>`,
-          nonTextPngBase64: PNG_1X1,
+          </svg>` }],
           elements: [{
-            kind: 'text', x: 20, y: 30, width: 38, height: 18, baseline: 44,
+            kind: 'text', paintOrder: 0, x: 20, y: 30, width: 38, height: 18, baseline: 44,
             text: 'Area ', fontFamily: 'Aptos', fontSize: 16,
             color: '#000000', bold: false, italic: false
           }, {
-            kind: 'text', x: 58, y: 30, width: 9, height: 18, baseline: 44,
+            kind: 'text', paintOrder: 1, x: 58, y: 30, width: 9, height: 18, baseline: 44,
             text: '𝑟', fontFamily: 'Cambria Math', fontSize: 16,
             color: '#000000', bold: false, italic: false
           }, {
-            kind: 'text', x: 67, y: 25, width: 6, height: 12, baseline: 36,
+            kind: 'text', paintOrder: 2, x: 67, y: 25, width: 6, height: 12, baseline: 36,
             text: '2', fontFamily: 'Cambria Math', fontSize: 11,
             color: '#000000', bold: false, italic: false
           }, {
-            kind: 'text', x: 76, y: 30, width: 9, height: 18, baseline: 44,
+            kind: 'text', paintOrder: 3, x: 76, y: 30, width: 9, height: 18, baseline: 44,
             text: '+', fontFamily: 'Cambria Math', fontSize: 16,
             color: '#000000', bold: false, italic: false
           }, {
-            kind: 'text', x: 88, y: 30, width: 18, height: 18, baseline: 44,
+            kind: 'text', paintOrder: 4, x: 88, y: 30, width: 18, height: 18, baseline: 44,
             text: ' H', fontFamily: 'Cambria Math', fontSize: 16,
             color: '#000000', bold: false, italic: false
           }, {
-            kind: 'text', x: 106, y: 37, width: 6, height: 12, baseline: 50,
+            kind: 'text', paintOrder: 5, x: 106, y: 37, width: 6, height: 12, baseline: 50,
             text: '2', fontFamily: 'Cambria Math', fontSize: 11,
             color: '#000000', bold: false, italic: false
           }, {
-            kind: 'text', x: 112, y: 30, width: 42, height: 18, baseline: 44,
+            kind: 'text', paintOrder: 6, x: 112, y: 30, width: 42, height: 18, baseline: 44,
             text: ' done', fontFamily: 'Aptos', fontSize: 16,
             color: '#000000', bold: false, italic: false
           }],
@@ -359,10 +406,9 @@ describe('browser-compatible editable presentation writer', () => {
           pageIndex: 0,
           width: 240,
           height: 135,
-          nonTextSvg: '<svg xmlns="http://www.w3.org/2000/svg"/>',
-          nonTextPngBase64: PNG_1X1,
+          fallbackLayers: [],
           elements: [{
-            kind: 'text', x: 20, y: 30, width: 80, height: 20,
+            kind: 'text', paintOrder: 0, x: 20, y: 30, width: 80, height: 20,
             text: '研究结论', fontFamily: 'Noto Sans CJK SC', fontSize: 16,
             color: '#000000', bold: false, italic: false
           }],

@@ -4,6 +4,7 @@ import type {
   EditablePresentationRequest,
   PresentationArtifact,
   PresentationExportModel,
+  PresentationFallbackLayer,
   PresentationImageElement,
   PresentationLinkElement,
   PresentationPageModel,
@@ -19,8 +20,16 @@ import { rasterizeSvgToPngBase64 } from './svg/rasterizer'
 const POINTS_PER_INCH = 72
 const MAX_PAGES = 1_000
 const MAX_ELEMENTS = 100_000
+const MAX_FALLBACK_LAYERS = 512
+const MAX_VECTOR_INPUT_BYTES = 64 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 const MAX_INTERMEDIATE_BYTES = 128 * 1024 * 1024
+
+type PresentationPaintLayer =
+  | PresentationFallbackLayer
+  | PresentationTextElement
+  | PresentationRectangleElement
+  | PresentationImageElement
 
 export async function createVisualPptx(
   request: VisualPresentationRequest
@@ -57,51 +66,82 @@ export async function createEditablePptx(
   let remainingFallbackShapeCount = 0
 
   for (const [pageOffset, page] of pages.entries()) {
-    const converted = convertSvgToDrawingMl(page.nonTextSvg, {
-      emuPerUnit: 12_700,
-      firstShapeId: 1_000_000 + pageOffset * 100_000,
-      vectorGroups: page.vectorGroups
-    })
-    nativeVectorShapeCount += converted.nativeShapeCount
-    // Compiler fallback items and SVG leaves are different units. Only claim that all
-    // shape fallbacks disappeared when the residual layer is actually empty.
-    if (converted.residualHasVisualContent) {
-      remainingFallbackShapeCount += page.fallbackShapeCount
-    }
-    for (const warning of converted.warnings) warnings.add(warning)
-
     const slide = pptx.addSlide()
     const vectorLayers: SlideArchivePatch['vectorLayers'] = []
     const residualLayers: SlideArchivePatch['residualLayers'] = []
-    for (const [layerOffset, layer] of converted.layers.entries()) {
-      const layerNumber = layerOffset + 1
-      if (layer.kind === 'drawingMl') {
-        const anchorName = `typ2pptx-vector-anchor-${page.pageIndex + 1}-${layerNumber}`
-        addVectorAnchor(pptx, slide, anchorName)
-        vectorLayers.push({ anchorName, drawingMl: layer.drawingMl })
+    const paintLayers = orderedPaintLayers(page)
+    let pageHasResidual = false
+    let archiveLayerNumber = 0
+    let fallbackLayerNumber = 0
+    for (let paintOffset = 0; paintOffset < paintLayers.length; paintOffset += 1) {
+      const paint = paintLayers[paintOffset]!
+      if (paint.kind === 'text') {
+        const runs = [paint]
+        while (
+          paintOffset + 1 < paintLayers.length &&
+          paintLayers[paintOffset + 1]?.kind === 'text' &&
+          canShareTextBox(runs, paintLayers[paintOffset + 1] as PresentationTextElement)
+        ) {
+          runs.push(paintLayers[paintOffset + 1] as PresentationTextElement)
+          paintOffset += 1
+        }
+        addEditableText(slide, runs)
         continue
       }
-      const fallbackPngBase64 = converted.nativeShapeCount > 0
-        ? await rasterizeResidualSvg(request, layer.svg, page.width, page.height)
-        : page.nonTextPngBase64
-      assertPng(fallbackPngBase64)
-      const imageName = `typ2pptx residual layer ${page.pageIndex + 1}.${layerNumber}`
-      slide.addImage({
-        data: `data:image/png;base64,${fallbackPngBase64}`,
-        x: 0,
-        y: 0,
-        w: toInches(page.width),
-        h: toInches(page.height),
-        altText: `Unconverted Typst artwork for page ${page.pageIndex + 1}`,
-        objectName: imageName
+      if (paint.kind === 'rectangle') {
+        addEditableRectangle(pptx, slide, paint)
+        continue
+      }
+      if (paint.kind === 'image') {
+        addEditableImage(slide, paint)
+        continue
+      }
+
+      fallbackLayerNumber += 1
+      const converted = convertSvgToDrawingMl(paint.svg, {
+        emuPerUnit: 12_700,
+        firstShapeId: 1_000_000 + fallbackLayerNumber * 100_001,
+        vectorGroups: page.vectorGroups
       })
-      residualLayers.push({
-        imageName,
-        mediaName: `typ2pptx-residual-${pageOffset + 1}-${layerNumber}`,
-        svg: layer.svg
-      })
+      nativeVectorShapeCount += converted.nativeShapeCount
+      pageHasResidual ||= converted.residualHasVisualContent
+      for (const warning of converted.warnings) warnings.add(warning)
+      for (const layer of converted.layers) {
+        archiveLayerNumber += 1
+        if (layer.kind === 'drawingMl') {
+          const anchorName = `typ2pptx-vector-anchor-${page.pageIndex + 1}-${archiveLayerNumber}`
+          addVectorAnchor(pptx, slide, anchorName)
+          vectorLayers.push({ anchorName, drawingMl: layer.drawingMl })
+          continue
+        }
+        const fallbackPngBase64 = await rasterizeResidualSvg(
+          request,
+          layer.svg,
+          page.width,
+          page.height
+        )
+        assertPng(fallbackPngBase64)
+        const imageName = `typ2pptx residual layer ${page.pageIndex + 1}.${archiveLayerNumber}`
+        slide.addImage({
+          data: `data:image/png;base64,${fallbackPngBase64}`,
+          x: 0,
+          y: 0,
+          w: toInches(page.width),
+          h: toInches(page.height),
+          altText: `Unconverted Typst artwork for page ${page.pageIndex + 1}`,
+          objectName: imageName
+        })
+        residualLayers.push({
+          imageName,
+          mediaName: `typ2pptx-residual-${pageOffset + 1}-${archiveLayerNumber}`,
+          svg: layer.svg
+        })
+      }
     }
-    addEditableElements(pptx, slide, page, slideNumbers)
+    // Compiler fallback items and SVG leaves are different units. Only claim that all
+    // shape fallbacks disappeared when every ordered fallback layer has no residual.
+    if (pageHasResidual) remainingFallbackShapeCount += page.fallbackShapeCount
+    addEditableLinks(pptx, slide, page, slideNumbers)
     addNotes(slide, request.notesByPageIndex?.get(page.pageIndex))
     patches.push({
       slideNumber: pageOffset + 1,
@@ -153,29 +193,20 @@ function createPresentation(title: string, width: number, height: number): PptxG
   return pptx
 }
 
-function addEditableElements(
+function orderedPaintLayers(page: PresentationPageModel): PresentationPaintLayer[] {
+  return [
+    ...page.fallbackLayers,
+    ...page.elements.filter((element): element is Exclude<PresentationPaintLayer, PresentationFallbackLayer> =>
+      element.kind === 'text' || element.kind === 'rectangle' || element.kind === 'image')
+  ].sort((left, right) => left.paintOrder - right.paintOrder)
+}
+
+function addEditableLinks(
   pptx: PptxGenJS,
   slide: PptxGenJS.Slide,
   page: PresentationPageModel,
   slideNumbers: ReadonlyMap<number, number>
 ): void {
-  for (let index = 0; index < page.elements.length; index += 1) {
-    const element = page.elements[index]!
-    if (element.kind === 'text') {
-      const runs = [element]
-      while (
-        index + 1 < page.elements.length &&
-        page.elements[index + 1]?.kind === 'text' &&
-        canShareTextBox(runs, page.elements[index + 1] as PresentationTextElement)
-      ) {
-        runs.push(page.elements[index + 1] as PresentationTextElement)
-        index += 1
-      }
-      addEditableText(slide, runs)
-    }
-    if (element.kind === 'rectangle') addEditableRectangle(pptx, slide, element)
-    if (element.kind === 'image') addEditableImage(slide, element)
-  }
   for (const element of page.elements) {
     if (element.kind === 'link') addLinkOverlay(pptx, slide, element)
     if (element.kind === 'slideLink') {
@@ -438,6 +469,27 @@ function assertModelBudget(model: PresentationExportModel): void {
   ), 0)
   if (imageBytes > MAX_OUTPUT_BYTES) {
     throw new Error('Editable PPTX images exceed the 64 MB input budget')
+  }
+  if (model.pages.some((page) => page.fallbackLayers.length > MAX_FALLBACK_LAYERS)) {
+    throw new Error(`Editable PPTX exceeds the ${MAX_FALLBACK_LAYERS}-fallback-layer page budget`)
+  }
+  const vectorBytes = model.pages.reduce((total, page) => total + page.fallbackLayers.reduce(
+    (pageTotal, layer) => pageTotal + new TextEncoder().encode(layer.svg).byteLength,
+    0
+  ), 0)
+  if (vectorBytes > MAX_VECTOR_INPUT_BYTES) {
+    throw new Error('Editable PPTX vector layers exceed the 64 MB input budget')
+  }
+  for (const page of model.pages) assertPaintOrder(page)
+}
+
+function assertPaintOrder(page: PresentationPageModel): void {
+  const orders = orderedPaintLayers(page).map((layer) => layer.paintOrder)
+  if (
+    orders.some((order) => !Number.isSafeInteger(order) || order < 0) ||
+    orders.some((order, index) => order !== index)
+  ) {
+    throw new Error('Editable PPTX paint order must be unique and contiguous')
   }
 }
 

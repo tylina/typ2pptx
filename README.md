@@ -20,7 +20,8 @@ The portable pipeline currently preserves:
 - simple inline math as Cambria Math text and compiler-identified complex formulas as grouped curves;
 - rectangles, original PNG/JPEG/GIF images, external links, slide links, and speaker notes;
 - SVG paths, lines, polygons, ellipses, solid/linear/radial fills, opacity, strokes, and dash patterns;
-- original SVG paint order through alternating native DrawingML and residual SVG layers;
+- compiler-provided paint order across editable objects and fallback SVG segments, plus the original
+  SVG order inside every segment;
 - an SVG source plus a PNG compatibility image for each residual layer.
 
 Tylina uses Rust/WASM `resvg` for deterministic residual PNGs in Web Workers. The standalone core also
@@ -44,9 +45,8 @@ const artifact = await createEditablePptx({
 
 The existing Python CLI remains supported and is the upstream behavioral reference. The portable core
 is not yet declared fully equivalent: PowerPoint/LibreOffice visual-diff fixtures, paragraph ownership
-and alignment, arrows/effects, and exact interleaving of compiler-extracted objects with background
-layers remain parity gates. Unsupported content stays visible as a named SVG/PNG layer rather than
-being silently discarded or falsely reported as editable.
+and alignment, and arrows/effects remain parity gates. Unsupported content stays visible as a named
+SVG/PNG layer rather than being silently discarded or falsely reported as editable.
 
 ## Features
 

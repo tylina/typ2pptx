@@ -47,6 +47,34 @@ describe('portable SVG to DrawingML conversion', () => {
     expect(result.residualHasVisualContent).toBe(false)
   })
 
+  test('resolves the referenced user-space gradient shape emitted by Typst', () => {
+    const result = convertSvgToDrawingMl(`
+      <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+        <g transform="translate(50 106.85)">
+          <path fill="url(#paint)" d="M 0 0v 100h 200v -100Z "/>
+        </g>
+        <defs>
+          <linearGradient id="stops" spreadMethod="pad" gradientUnits="userSpaceOnUse"
+            x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#1a237e"/>
+            <stop offset="100%" stop-color="#4fc3f7"/>
+          </linearGradient>
+        </defs>
+        <defs>
+          <linearGradient id="paint" gradientTransform="scale(200 100)"
+            href="#stops" xlink:href="#stops"/>
+        </defs>
+      </svg>
+    `)
+
+    expect(result.nativeShapeCount).toBe(1)
+    expect(result.unsupportedElementCount).toBe(0)
+    expect(result.drawingMl).toContain('<a:gradFill')
+    expect(result.drawingMl).toContain('1A237E')
+    expect(result.drawingMl).toContain('4FC3F7')
+    expect(result.residualHasVisualContent).toBe(false)
+  })
+
   test('keeps unsupported clipped or filtered content in a residual SVG fallback', () => {
     const result = convertSvgToDrawingMl(`
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
@@ -61,6 +89,71 @@ describe('portable SVG to DrawingML conversion', () => {
     expect(result.residualHasVisualContent).toBe(true)
     expect(result.residualSvg).toContain('clip-path="url(#clip)"')
     expect(result.residualSvg).toContain('filter="url(#shadow)"')
+  })
+
+  test('converts a proven drop shadow and keeps plain blur in the residual layer', () => {
+    const result = convertSvgToDrawingMl(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+        <defs>
+          <filter id="shadow"><feDropShadow dx="3" dy="4" stdDeviation="2"
+            flood-color="#334455" flood-opacity="0.6"/></filter>
+          <filter id="glow"><feGaussianBlur stdDeviation="3"/></filter>
+        </defs>
+        <rect x="4" y="5" width="20" height="10" fill="#abcdef"
+          filter="url(#shadow)"/>
+        <circle cx="60" cy="20" r="8" fill="#fedcba" filter="url(#glow)"/>
+      </svg>
+    `)
+
+    expect(result.nativeShapeCount).toBe(1)
+    expect(result.unsupportedElementCount).toBe(1)
+    expect(result.drawingMl).toContain('<a:outerShdw')
+    expect(result.drawingMl).not.toContain('<a:glow')
+    expect(result.drawingMl).toContain('334455')
+    expect(result.drawingMl).toContain('<a:alpha val="60000"/>')
+    expect(result.residualSvg).toContain('filter="url(#glow)"')
+    expect(result.residualHasVisualContent).toBe(true)
+  })
+
+  test('converts classified SVG line markers into native PowerPoint arrow ends', () => {
+    const result = convertSvgToDrawingMl(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+        <defs>
+          <marker id="arrow" markerWidth="3" markerHeight="3" viewBox="0 0 10 10"
+            refX="10" refY="5" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 Z" fill="context-stroke"/>
+          </marker>
+        </defs>
+        <line x1="90" y1="10" x2="10" y2="40" stroke="#123456"
+          stroke-width="2" marker-end="url(#arrow)"/>
+      </svg>
+    `)
+
+    expect(result.nativeShapeCount).toBe(1)
+    expect(result.unsupportedElementCount).toBe(0)
+    expect(result.drawingMl).toContain('<a:prstGeom prst="line"')
+    expect(result.drawingMl).toContain('<a:tailEnd type="triangle"')
+    expect(result.drawingMl).toContain('flipH="1"')
+    expect(result.residualHasVisualContent).toBe(false)
+  })
+
+  test('keeps an unanchored SVG marker in the residual layer', () => {
+    const result = convertSvgToDrawingMl(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+        <defs>
+          <marker id="unsafe" markerWidth="3" markerHeight="3">
+            <path d="M 0 0 L 10 5 L 0 10 Z"/>
+          </marker>
+        </defs>
+        <line x1="10" y1="10" x2="90" y2="40" stroke="#123456"
+          stroke-width="2" marker-end="url(#unsafe)"/>
+      </svg>
+    `)
+
+    expect(result.nativeShapeCount).toBe(0)
+    expect(result.unsupportedElementCount).toBe(1)
+    expect(result.residualSvg).toContain('marker-end="url(#unsafe)"')
+    expect(result.residualHasVisualContent).toBe(true)
   })
 
   test('preserves alternating residual and native SVG paint layers', () => {

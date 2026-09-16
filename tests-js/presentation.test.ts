@@ -1,3 +1,4 @@
+import { DOMParser } from '@xmldom/xmldom'
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, test } from 'vitest'
 
@@ -27,7 +28,7 @@ describe('browser-compatible editable presentation writer', () => {
         }, {
           kind: 'text', paintOrder: 2, x: 70, y: 40, width: 220, height: 40,
           text: 'Editable evidence', fontFamily: 'Aptos', fontSize: 20, baseline: 64,
-          color: '#123456', bold: true, italic: false, textBox: null
+          color: '#123456', bold: true, italic: false, rtl: false, textBox: null
         }, {
           kind: 'link', x: 70, y: 40, width: 220, height: 40,
           url: 'https://example.com/evidence'
@@ -72,6 +73,8 @@ describe('browser-compatible editable presentation writer', () => {
 
     expect(slide).toContain('SVG path')
     expect(slide).toContain('<a:custGeom>')
+    expect(() => new DOMParser().parseFromString(slide, 'application/xml')).not.toThrow()
+    expect(slide.match(/xmlns:asvg=/g) ?? []).toHaveLength(1)
     expect(slide).toContain('Editable evidence')
     expect(slide).toContain('Editable Typst rectangle')
     expect(slide).not.toContain('typ2pptx-vector-anchor')
@@ -194,7 +197,7 @@ describe('browser-compatible editable presentation writer', () => {
           elements: [{
             kind: 'text', paintOrder: 1, x: 10, y: 25, width: 50, height: 15,
             text: 'Between layers', fontFamily: 'Aptos', fontSize: 12, baseline: 37,
-            color: '#000000', bold: false, italic: false, textBox: null
+            color: '#000000', bold: false, italic: false, rtl: false, textBox: null
           }, {
             kind: 'rectangle', paintOrder: 3,
             x: 60, y: 25, width: 20, height: 15, fillColor: '#abcdef'
@@ -305,11 +308,11 @@ describe('browser-compatible editable presentation writer', () => {
           elements: [{
             kind: 'text', paintOrder: 0, x: 20, y: 30, width: 58, height: 18, baseline: 44,
             text: 'Evidence ', fontFamily: 'Aptos', fontSize: 16,
-            color: '#123456', bold: false, italic: false, textBox
+            color: '#123456', bold: false, italic: false, rtl: false, textBox
           }, {
             kind: 'text', paintOrder: 1, x: 78, y: 30, width: 52, height: 18, baseline: 44,
             text: 'matters', fontFamily: 'Aptos', fontSize: 16,
-            color: '#654321', bold: true, italic: true, textBox
+            color: '#654321', bold: true, italic: true, rtl: false, textBox
           }],
           fallbackTextCount: 0,
           fallbackShapeCount: 0
@@ -347,11 +350,11 @@ describe('browser-compatible editable presentation writer', () => {
           elements: [{
             kind: 'text', paintOrder: 0, x: 16, y: 14, width: 45, height: 13, baseline: 23,
             text: 'Alpha cell', fontFamily: 'Aptos', fontSize: 11,
-            color: '#000000', bold: false, italic: false, textBox: null
+            color: '#000000', bold: false, italic: false, rtl: false, textBox: null
           }, {
             kind: 'text', paintOrder: 1, x: 77, y: 14, width: 38, height: 13, baseline: 23,
             text: 'Beta cell', fontFamily: 'Aptos', fontSize: 11,
-            color: '#000000', bold: false, italic: false, textBox: null
+            color: '#000000', bold: false, italic: false, rtl: false, textBox: null
           }],
           fallbackTextCount: 0,
           fallbackShapeCount: 0
@@ -391,11 +394,11 @@ describe('browser-compatible editable presentation writer', () => {
           elements: [{
             kind: 'text', paintOrder: 0, x: 72, y: 30, width: 48, height: 18, baseline: 44,
             text: 'Owned', fontFamily: 'Aptos', fontSize: 16,
-            color: '#123456', bold: false, italic: false, textBox
+            color: '#123456', bold: false, italic: false, rtl: false, textBox
           }, {
             kind: 'text', paintOrder: 1, x: 130, y: 30, width: 48, height: 18, baseline: 44,
             text: 'line', fontFamily: 'Aptos', fontSize: 16,
-            color: '#654321', bold: true, italic: false, textBox
+            color: '#654321', bold: true, italic: false, rtl: false, textBox
           }],
           fallbackTextCount: 0,
           fallbackShapeCount: 0
@@ -429,6 +432,7 @@ describe('browser-compatible editable presentation writer', () => {
             kind: 'text', paintOrder: 0, x: 12, y: 30, width: 216, height: 18, baseline: 44,
             text: 'Words fill this line', fontFamily: 'Aptos', fontSize: 16,
             color: '#123456', bold: false, italic: false,
+            rtl: false,
             textBox: { ...textBox, alignment: 'justify' }
           }],
           fallbackTextCount: 0,
@@ -461,15 +465,15 @@ describe('browser-compatible editable presentation writer', () => {
           elements: [{
             kind: 'text', paintOrder: 0, x: 12, y: 30, width: 42, height: 18, baseline: 44,
             text: 'First ', fontFamily: 'Aptos', fontSize: 16,
-            color: '#123456', bold: false, italic: false, textBox: firstLine
+            color: '#123456', bold: false, italic: false, rtl: false, textBox: firstLine
           }, {
             kind: 'text', paintOrder: 1, x: 54, y: 30, width: 70, height: 18, baseline: 44,
             text: 'styled line', fontFamily: 'Aptos', fontSize: 16,
-            color: '#654321', bold: true, italic: false, textBox: firstLine
+            color: '#654321', bold: true, italic: false, rtl: false, textBox: firstLine
           }, {
             kind: 'text', paintOrder: 2, x: 12, y: 50, width: 150, height: 18, baseline: 64,
             text: 'Second compiler line', fontFamily: 'Aptos', fontSize: 16,
-            color: '#123456', bold: false, italic: false, textBox: secondLine
+            color: '#123456', bold: false, italic: false, rtl: false, textBox: secondLine
           }],
           fallbackTextCount: 0, fallbackShapeCount: 0
         }],
@@ -487,6 +491,73 @@ describe('browser-compatible editable presentation writer', () => {
     expect(slide).toContain('<a:t>Second compiler line</a:t>')
   })
 
+  test('preserves compiler-owned blank code lines inside one copyable object', async () => {
+    const firstLine = {
+      id: 'raw-code-line-0', paragraphId: 'raw-code', lineIndex: 0,
+      x: 12, width: 216, alignment: 'left' as const, reflow: false
+    }
+    const thirdLine = { ...firstLine, id: 'raw-code-line-2', lineIndex: 2 }
+    const result = await createEditablePptx({
+      title: 'Code with a blank line',
+      model: {
+        pages: [{
+          pageIndex: 0, width: 240, height: 135, fallbackLayers: [],
+          elements: [{
+            kind: 'text', paintOrder: 0, x: 12, y: 30, width: 70, height: 18, baseline: 44,
+            text: 'let x = 1', fontFamily: 'Aptos Mono', fontSize: 16,
+            color: '#123456', bold: false, italic: false, rtl: false, textBox: firstLine
+          }, {
+            kind: 'text', paintOrder: 1, x: 12, y: 70, width: 70, height: 18, baseline: 84,
+            text: 'x + 1', fontFamily: 'Aptos Mono', fontSize: 16,
+            color: '#654321', bold: true, italic: false, rtl: false, textBox: thirdLine
+          }],
+          fallbackTextCount: 0, fallbackShapeCount: 0
+        }],
+        fonts: ['Aptos Mono'], editableTextCount: 2, editableShapeCount: 0,
+        fallbackTextCount: 0, fallbackShapeCount: 0, warnings: []
+      }
+    })
+    const slide = strFromU8(unzipSync(result.bytes)['ppt/slides/slide1.xml'])
+
+    expect(slide.match(/Editable Typst text/gu)).toHaveLength(1)
+    expect(slide.match(/<a:br\/>/gu)).toHaveLength(2)
+    expect(slide).toContain('<a:spcPts val="2000"')
+    expect(slide).toContain('<a:t>let x = 1</a:t>')
+    expect(slide).toContain('<a:t>x + 1</a:t>')
+  })
+
+  test('bounds blank-line expansion across the complete presentation', async () => {
+    const rawLine = {
+      id: 'raw-code-line-0', paragraphId: 'raw-code', lineIndex: 0,
+      x: 12, width: 216, alignment: 'left' as const, reflow: false
+    }
+    await expect(createEditablePptx({
+      title: 'Sparse raw lines',
+      model: {
+        pages: [{
+          pageIndex: 0, width: 240, height: 135, fallbackLayers: [],
+          elements: [{
+            kind: 'text', paintOrder: 0, x: 12, y: 10, width: 20, height: 12,
+            baseline: 20, text: 'A', fontFamily: 'Aptos', fontSize: 10,
+            color: '#000000', bold: false, italic: false, rtl: false, textBox: null
+          }, {
+            kind: 'text', paintOrder: 1, x: 12, y: 30, width: 30, height: 12,
+            baseline: 40, text: 'B', fontFamily: 'Aptos Mono', fontSize: 10,
+            color: '#000000', bold: false, italic: false, rtl: false, textBox: rawLine
+          }, {
+            kind: 'text', paintOrder: 2, x: 12, y: 50, width: 30, height: 12,
+            baseline: 60, text: 'C', fontFamily: 'Aptos Mono', fontSize: 10,
+            color: '#000000', bold: false, italic: false, rtl: false,
+            textBox: { ...rawLine, id: 'raw-code-line-99999', lineIndex: 99_999 }
+          }],
+          fallbackTextCount: 0, fallbackShapeCount: 0
+        }],
+        fonts: ['Aptos', 'Aptos Mono'], editableTextCount: 3, editableShapeCount: 0,
+        fallbackTextCount: 0, fallbackShapeCount: 0, warnings: []
+      }
+    })).rejects.toThrow('generated-text-run budget')
+  })
+
   test('keeps unequal indented line boxes independent', async () => {
     const result = await createEditablePptx({
       title: 'Indented compiler lines',
@@ -497,6 +568,7 @@ describe('browser-compatible editable presentation writer', () => {
             kind: 'text', paintOrder: 0, x: 30, y: 30, width: 150, height: 18, baseline: 44,
             text: 'Indented first line', fontFamily: 'Aptos', fontSize: 16,
             color: '#123456', bold: false, italic: false,
+            rtl: false,
             textBox: {
               id: 'paragraph-indent-line-0', paragraphId: 'paragraph-indent', lineIndex: 0,
               x: 30, width: 198, alignment: 'left', reflow: false
@@ -505,6 +577,7 @@ describe('browser-compatible editable presentation writer', () => {
             kind: 'text', paintOrder: 1, x: 12, y: 50, width: 170, height: 18, baseline: 64,
             text: 'Unindented second line', fontFamily: 'Aptos', fontSize: 16,
             color: '#123456', bold: false, italic: false,
+            rtl: false,
             textBox: {
               id: 'paragraph-indent-line-1', paragraphId: 'paragraph-indent', lineIndex: 1,
               x: 12, width: 216, alignment: 'left', reflow: false
@@ -532,6 +605,7 @@ describe('browser-compatible editable presentation writer', () => {
             kind: 'text', paintOrder: 0, x: 12, y: 30, width: 216, height: 48,
             baseline: 44, text: 'Native paragraphs remain coherent when edited in PowerPoint.',
             fontFamily: 'Aptos', fontSize: 16, color: '#123456', bold: false, italic: false,
+            rtl: false,
             textBox: {
               id: 'paragraph-a-paragraph', paragraphId: 'paragraph-a', lineIndex: 0,
               x: 12, width: 216, alignment: 'justify', reflow: true, lineSpacing: 14.4
@@ -574,14 +648,14 @@ describe('browser-compatible editable presentation writer', () => {
           elements: [{
             kind: 'text', paintOrder: 0, x: 12, y: 30, width: 48, height: 18, baseline: 44,
             text: 'Not ', fontFamily: 'Aptos', fontSize: 16,
-            color: '#123456', bold: false, italic: false, textBox
+            color: '#123456', bold: false, italic: false, rtl: false, textBox
           }, {
             kind: 'rectangle', paintOrder: 1, x: 70, y: 30, width: 10, height: 10,
             fillColor: '#abcdef'
           }, {
             kind: 'text', paintOrder: 2, x: 80, y: 30, width: 48, height: 18, baseline: 44,
             text: 'contiguous', fontFamily: 'Aptos', fontSize: 16,
-            color: '#123456', bold: false, italic: false, textBox
+            color: '#123456', bold: false, italic: false, rtl: false, textBox
           }],
           fallbackTextCount: 0,
           fallbackShapeCount: 0
@@ -619,7 +693,7 @@ describe('browser-compatible editable presentation writer', () => {
           elements: [{
             kind: 'text', paintOrder: 0, x: 130, y: 30, width: 48, height: 18, baseline: 44,
             text: 'Outside', fontFamily: 'Aptos', fontSize: 16,
-            color: '#123456', bold: false, italic: false, textBox
+            color: '#123456', bold: false, italic: false, rtl: false, textBox
           }],
           fallbackTextCount: 0,
           fallbackShapeCount: 0
@@ -649,6 +723,7 @@ describe('browser-compatible editable presentation writer', () => {
             kind: 'text', paintOrder: 0, x: 12, y: 30, width: 48, height: 18,
             text: 'Invalid', fontFamily: 'Aptos', fontSize: 16, baseline: Number.NaN,
             color: '#123456', bold: false, italic: false,
+            rtl: false,
             textBox: {
               id: 'paragraph-a-line-0', paragraphId: 'paragraph-a', lineIndex: 0,
               x: 12, width: 100, alignment: 'left', reflow: false
@@ -689,31 +764,31 @@ describe('browser-compatible editable presentation writer', () => {
           elements: [{
             kind: 'text', paintOrder: 0, x: 20, y: 30, width: 38, height: 18, baseline: 44,
             text: 'Area ', fontFamily: 'Aptos', fontSize: 16,
-            color: '#000000', bold: false, italic: false, textBox
+            color: '#000000', bold: false, italic: false, rtl: false, textBox
           }, {
             kind: 'text', paintOrder: 1, x: 58, y: 30, width: 9, height: 18, baseline: 44,
             text: '𝑟', fontFamily: 'Cambria Math', fontSize: 16,
-            color: '#000000', bold: false, italic: false, textBox
+            color: '#000000', bold: false, italic: false, rtl: false, textBox
           }, {
             kind: 'text', paintOrder: 2, x: 67, y: 25, width: 6, height: 12, baseline: 36,
             text: '2', fontFamily: 'Cambria Math', fontSize: 11,
-            color: '#000000', bold: false, italic: false, textBox
+            color: '#000000', bold: false, italic: false, rtl: false, textBox
           }, {
             kind: 'text', paintOrder: 3, x: 76, y: 30, width: 9, height: 18, baseline: 44,
             text: '+', fontFamily: 'Cambria Math', fontSize: 16,
-            color: '#000000', bold: false, italic: false, textBox
+            color: '#000000', bold: false, italic: false, rtl: false, textBox
           }, {
             kind: 'text', paintOrder: 4, x: 88, y: 30, width: 18, height: 18, baseline: 44,
             text: ' H', fontFamily: 'Cambria Math', fontSize: 16,
-            color: '#000000', bold: false, italic: false, textBox
+            color: '#000000', bold: false, italic: false, rtl: false, textBox
           }, {
             kind: 'text', paintOrder: 5, x: 106, y: 37, width: 6, height: 12, baseline: 50,
             text: '2', fontFamily: 'Cambria Math', fontSize: 11,
-            color: '#000000', bold: false, italic: false, textBox
+            color: '#000000', bold: false, italic: false, rtl: false, textBox
           }, {
             kind: 'text', paintOrder: 6, x: 112, y: 30, width: 42, height: 18, baseline: 44,
             text: ' done', fontFamily: 'Aptos', fontSize: 16,
-            color: '#000000', bold: false, italic: false, textBox
+            color: '#000000', bold: false, italic: false, rtl: false, textBox
           }],
           vectorGroups: [{
             id: 'formula-1', kind: 'math', x: 168, y: 78, width: 30, height: 15
@@ -753,7 +828,7 @@ describe('browser-compatible editable presentation writer', () => {
           elements: [{
             kind: 'text', paintOrder: 0, x: 20, y: 30, width: 80, height: 20, baseline: 46,
             text: '研究结论', fontFamily: 'Noto Sans CJK SC', fontSize: 16,
-            color: '#000000', bold: false, italic: false, textBox: null
+            color: '#000000', bold: false, italic: false, rtl: false, textBox: null
           }],
           fallbackTextCount: 0,
           fallbackShapeCount: 0
@@ -769,5 +844,70 @@ describe('browser-compatible editable presentation writer', () => {
     const slide = strFromU8(unzipSync(result.bytes)['ppt/slides/slide1.xml'])
 
     expect(slide).toContain('<a:ea typeface="Noto Sans CJK SC"')
+  })
+
+  test('writes compiler-provided RTL direction on an isolated editable run', async () => {
+    const result = await createEditablePptx({
+      title: 'RTL text',
+      model: {
+        pages: [{
+          pageIndex: 0,
+          width: 240,
+          height: 135,
+          fallbackLayers: [],
+          elements: [{
+            kind: 'text', paintOrder: 0, x: 80, y: 30, width: 140, height: 20,
+            baseline: 46, text: 'مرحبا بالعالم', fontFamily: 'Noto Sans Arabic',
+            fontSize: 16, color: '#000000', bold: false, italic: false,
+            rtl: true, textBox: null
+          }],
+          fallbackTextCount: 0,
+          fallbackShapeCount: 0
+        }],
+        fonts: ['Noto Sans Arabic'],
+        editableTextCount: 1,
+        editableShapeCount: 0,
+        fallbackTextCount: 0,
+        fallbackShapeCount: 0,
+        warnings: []
+      }
+    })
+    const slide = strFromU8(unzipSync(result.bytes)['ppt/slides/slide1.xml'])
+
+    expect(slide).toContain('<a:pPr rtl="1"')
+    expect(slide).toContain('<a:t>مرحبا بالعالم</a:t>')
+  })
+
+  test('keeps opposite writing directions in separate editable text objects', async () => {
+    const textBox = {
+      id: 'mixed-direction-line', paragraphId: 'mixed-direction', lineIndex: 0,
+      x: 20, width: 200, alignment: 'left' as const, reflow: false
+    }
+    const result = await createEditablePptx({
+      title: 'Mixed direction',
+      model: {
+        pages: [{
+          pageIndex: 0, width: 240, height: 135, fallbackLayers: [],
+          elements: [{
+            kind: 'text', paintOrder: 0, x: 20, y: 30, width: 50, height: 20,
+            baseline: 46, text: 'Evidence', fontFamily: 'Aptos', fontSize: 16,
+            color: '#000000', bold: false, italic: false, rtl: false, textBox
+          }, {
+            kind: 'text', paintOrder: 1, x: 80, y: 30, width: 120, height: 20,
+            baseline: 46, text: 'مرحبا بالعالم', fontFamily: 'Noto Sans Arabic',
+            fontSize: 16, color: '#000000', bold: false, italic: false,
+            rtl: true, textBox
+          }],
+          fallbackTextCount: 0, fallbackShapeCount: 0
+        }],
+        fonts: ['Aptos', 'Noto Sans Arabic'], editableTextCount: 2,
+        editableShapeCount: 0, fallbackTextCount: 0, fallbackShapeCount: 0,
+        warnings: []
+      }
+    })
+    const slide = strFromU8(unzipSync(result.bytes)['ppt/slides/slide1.xml'])
+
+    expect(slide.match(/Editable Typst text/gu)).toHaveLength(2)
+    expect(slide.match(/<a:pPr rtl="1"/gu)).toHaveLength(1)
   })
 })

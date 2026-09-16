@@ -35,6 +35,10 @@ type PresentationPaintLayer =
   | PresentationRectangleElement
   | PresentationImageElement
 
+interface GeneratedTextRunBudget {
+  remaining: number
+}
+
 export async function createVisualPptx(
   request: VisualPresentationRequest
 ): Promise<PresentationArtifact> {
@@ -66,6 +70,7 @@ export async function createEditablePptx(
   const slideNumbers = new Map(pages.map((page, index) => [page.pageIndex, index + 1]))
   const patches: SlideArchivePatch[] = []
   const warnings = new Set(request.model.warnings)
+  const generatedTextRunBudget = { remaining: MAX_ELEMENTS }
   let nativeVectorShapeCount = 0
   let remainingFallbackShapeCount = 0
 
@@ -89,7 +94,7 @@ export async function createEditablePptx(
           runs.push(paintLayers[paintOffset + 1] as PresentationTextElement)
           paintOffset += 1
         }
-        addEditableText(slide, runs)
+        addEditableText(slide, runs, page.width, generatedTextRunBudget)
         continue
       }
       if (paint.kind === 'rectangle') {
@@ -235,46 +240,72 @@ function addEditableImage(slide: PptxGenJS.Slide, element: PresentationImageElem
 
 function addEditableText(
   slide: PptxGenJS.Slide,
-  elements: readonly PresentationTextElement[]
+  elements: readonly PresentationTextElement[],
+  pageWidth: number,
+  budget: GeneratedTextRunBudget
 ): void {
-  for (const element of elements) validateElementBounds(element)
+  for (const element of elements) {
+    validateElementBounds(element)
+    if (typeof element.rtl !== 'boolean') {
+      throw new Error('Compiler-positioned PPTX text requires an exact writing direction')
+    }
+  }
   const visible = elements.filter((element) => element.text)
   if (visible.length === 0) return
   const lines = compilerTextLines(visible)
   const fixed = lines.length > 1 ? fixedLineContainer(lines) : undefined
   if (lines.length > 1 && !fixed) {
-    for (const line of lines) addEditableText(slide, line.elements)
+    for (const line of lines) addEditableText(slide, line.elements, pageWidth, budget)
     return
   }
   const textBox = lines.length === 1 ? lines[0]!.textBox : undefined
   const container = fixed ?? textBox
-  const left = container?.x ?? Math.min(...visible.map((element) => element.x))
+  let left = container?.x ?? Math.min(...visible.map((element) => element.x))
   const firstLine = lines[0]!.metrics
   const top = firstLine.baseline - firstLine.fontSize * POWERPOINT_BASELINE_FROM_TOP_EM
-  const right = container
+  let right = container
     ? container.x + container.width
     : Math.max(...visible.map((element) => element.x + element.width))
+  if (!container) {
+    const metricHeadroom = Math.max(0.5, firstLine.fontSize * 0.12)
+    if (visible[0]!.rtl) left = Math.max(0, left - metricHeadroom)
+    else right = Math.min(pageWidth, right + metricHeadroom)
+  }
   const bottom = Math.max(...visible.map((element) => element.y + element.height))
-  const runs: PptxGenJS.TextProps[] = lines.flatMap((line, lineIndex) =>
-    line.elements.map((element, runIndex) => ({
-      text: element.text,
-      options: {
-        fontFace: element.fontFamily || 'Arial',
-        fontSize: runFontSize(element, line.metrics),
-        color: cleanHexColor(element.color),
-        bold: element.bold,
-        italic: element.italic,
-        baseline: runBaseline(element, line.metrics),
-        softBreakBefore: lineIndex > 0 && runIndex === 0,
-        breakLine: false
-      }
-    })))
+  const missingLineCount = lines.slice(1).reduce((count, line, index) => {
+    const previous = lines[index]!.textBox
+    return count + (previous && line.textBox
+      ? line.textBox.lineIndex - previous.lineIndex - 1
+      : 0)
+  }, 0)
+  consumeGeneratedTextRunBudget(budget, visible.length + missingLineCount)
+  const runs: PptxGenJS.TextProps[] = lines.flatMap((line, lineOffset) => {
+    const previous = lines[lineOffset - 1]?.textBox
+    const missingLines = previous && line.textBox
+      ? line.textBox.lineIndex - previous.lineIndex - 1
+      : 0
+    const first = line.elements[0]!
+    const blankRuns = Array.from({ length: missingLines }, () => editableTextRun(
+      first,
+      line.metrics,
+      '',
+      true
+    ))
+    const lineRuns = line.elements.map((element, runIndex) => editableTextRun(
+      element,
+      line.metrics,
+      element.text,
+      lineOffset > 0 && runIndex === 0
+    ))
+    return [...blankRuns, ...lineRuns]
+  })
   slide.addText(runs, {
     x: toInches(left),
     y: toInches(top),
     w: toInches(right - left),
     h: toInches(bottom - top),
     margin: 0,
+    rtlMode: visible[0]!.rtl,
     fit: 'none',
     wrap: textBox?.reflow === true,
     ...(container ? { align: container.alignment } : {}),
@@ -287,6 +318,16 @@ function addEditableText(
   })
 }
 
+function consumeGeneratedTextRunBudget(
+  budget: GeneratedTextRunBudget,
+  count: number
+): void {
+  if (!Number.isSafeInteger(count) || count < 0 || count > budget.remaining) {
+    throw new Error(`Editable PPTX exceeds the ${MAX_ELEMENTS}-generated-text-run budget`)
+  }
+  budget.remaining -= count
+}
+
 function canShareTextContainer(
   current: readonly PresentationTextElement[],
   right: PresentationTextElement
@@ -295,16 +336,39 @@ function canShareTextContainer(
   const previous = current[current.length - 1]?.textBox
   const next = right.textBox
   if (!first || !previous || !next) return false
+  if (current.some((element) => element.rtl !== right.rtl)) return false
   if (next.id === previous.id) return true
   return !first.reflow &&
     !previous.reflow &&
     !next.reflow &&
     next.paragraphId === first.paragraphId &&
-    next.lineIndex === previous.lineIndex + 1 &&
+    next.lineIndex > previous.lineIndex &&
     approximatelyEqual(next.x, first.x) &&
     approximatelyEqual(next.width, first.width) &&
     compatibleFixedLineAlignments([...current.map((element) => element.textBox!.alignment),
       next.alignment])
+}
+
+function editableTextRun(
+  element: PresentationTextElement,
+  metrics: TextLineMetrics,
+  text: string,
+  softBreakBefore: boolean
+): PptxGenJS.TextProps {
+  return {
+    text,
+    options: {
+      fontFace: element.fontFamily || 'Arial',
+      fontSize: runFontSize(element, metrics),
+      color: cleanHexColor(element.color),
+      bold: element.bold,
+      italic: element.italic,
+      rtlMode: element.rtl,
+      baseline: runBaseline(element, metrics),
+      softBreakBefore,
+      breakLine: false
+    }
+  }
 }
 
 interface CompilerTextLine {
@@ -348,13 +412,13 @@ function fixedLineContainer(lines: readonly CompilerTextLine[]): FixedLineContai
       !box ||
       box.reflow ||
       box.paragraphId !== first.paragraphId ||
-      box.lineIndex !== first.lineIndex + index ||
+      (index > 0 && box.lineIndex <= boxes[index - 1]!.lineIndex) ||
       !approximatelyEqual(box.x, first.x) ||
       !approximatelyEqual(box.width, first.width))
   ) return undefined
   const alignments = boxes.map((box) => box!.alignment)
   if (!compatibleFixedLineAlignments(alignments)) return undefined
-  const lineSpacing = consistentLineSpacing(lines.map((line) => line.metrics.baseline))
+  const lineSpacing = consistentLineSpacing(lines)
   if (lineSpacing === undefined) return undefined
   return {
     x: first.x,
@@ -374,9 +438,13 @@ function compatibleFixedLineAlignments(
   )
 }
 
-function consistentLineSpacing(baselines: readonly number[]): number | undefined {
-  if (baselines.length < 2) return undefined
-  const deltas = baselines.slice(1).map((baseline, index) => baseline - baselines[index]!)
+function consistentLineSpacing(lines: readonly CompilerTextLine[]): number | undefined {
+  if (lines.length < 2) return undefined
+  const deltas = lines.slice(1).map((line, index) => {
+    const previous = lines[index]!
+    const lineGap = line.textBox!.lineIndex - previous.textBox!.lineIndex
+    return (line.metrics.baseline - previous.metrics.baseline) / lineGap
+  })
   if (deltas.some((delta) => !Number.isFinite(delta) || delta <= 0)) return undefined
   const average = deltas.reduce((sum, delta) => sum + delta, 0) / deltas.length
   const tolerance = Math.max(0.05, average * 0.01)
@@ -417,6 +485,7 @@ function isValidCompilerTextBox(value: PresentationTextBox): boolean {
     value.paragraphId.length <= 256 &&
     Number.isSafeInteger(value.lineIndex) &&
     value.lineIndex >= 0 &&
+    value.lineIndex < MAX_ELEMENTS &&
     Number.isFinite(value.x) &&
     Number.isFinite(value.width) &&
     value.x >= 0 &&

@@ -12,6 +12,8 @@ export interface PresentationTextElement {
   color: string
   bold: boolean
   italic: boolean
+  /** Compiler-provided base writing direction. */
+  rtl: boolean
   /**
    * A compiler-owned line or paragraph box, or `null` when the compiler
    * requires this run to stay isolated.

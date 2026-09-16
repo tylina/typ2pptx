@@ -1,5 +1,13 @@
 import type { Element as XmlElement } from '@xmldom/xmldom'
 
+import { drawingMlLineEnds, hasLineMarkers } from './markers'
+import {
+  applyMatrix,
+  IDENTITY_MATRIX,
+  parseTransformList,
+  type AffineMatrix
+} from './matrix'
+
 const NAMED_COLORS: Readonly<Record<string, string>> = {
   black: '000000', white: 'FFFFFF', red: 'FF0000', green: '008000', blue: '0000FF',
   yellow: 'FFFF00', cyan: '00FFFF', magenta: 'FF00FF', orange: 'FFA500',
@@ -20,6 +28,16 @@ export interface SvgStyleContext {
   lineJoin: string
   dashArray: string
   dashOffset: number
+}
+
+interface ResolvedGradient {
+  kind: 'linearGradient' | 'radialGradient'
+  stops: XmlElement[]
+  units: string
+  spread: string
+  transform: AffineMatrix
+  hasTransform: boolean
+  attribute(name: string): string | null
 }
 
 export const DEFAULT_SVG_STYLE: SvgStyleContext = {
@@ -72,9 +90,10 @@ export function supportsDrawingMlStyle(
   if (!['butt', 'round', 'square'].includes(style.lineCap)) return false
   if (!['miter', 'round', 'bevel'].includes(style.lineJoin)) return false
   if (!supportedKeyword(value('stroke-miterlimit'), ['4'])) return false
-  if (!supportedKeyword(value('marker-start'), ['none'])) return false
-  if (!supportedKeyword(value('marker-mid'), ['none'])) return false
-  if (!supportedKeyword(value('marker-end'), ['none'])) return false
+  if (
+    hasLineMarkers(element) &&
+    (localName(element) !== 'line' || drawingMlLineEnds(element, defs) === null)
+  ) return false
   if (!supportedKeyword(value('vector-effect'), ['none'])) return false
   if (!supportedKeyword(value('paint-order'), ['normal'])) return false
   if (!supportedKeyword(value('mix-blend-mode'), ['normal'])) return false
@@ -93,7 +112,7 @@ export function drawingMlFill(
   if (reference) {
     const gradient = defs.get(reference)
     if (gradient && isGradient(gradient)) {
-      return drawingMlGradient(gradient, style.opacity * style.fillOpacity)
+      return drawingMlGradient(gradient, defs, style.opacity * style.fillOpacity)
     }
     return '<a:noFill/>'
   }
@@ -105,6 +124,7 @@ export function drawingMlFill(
 }
 
 export function drawingMlStroke(
+  element: XmlElement,
   style: SvgStyleContext,
   defs: ReadonlyMap<string, XmlElement>,
   emuPerUnit: number
@@ -113,7 +133,7 @@ export function drawingMlStroke(
   const reference = paintReference(style.stroke)
   const paint = reference ? defs.get(reference) : undefined
   const fill = paint && isGradient(paint)
-    ? drawingMlGradient(paint, style.opacity * style.strokeOpacity)
+    ? drawingMlGradient(paint, defs, style.opacity * style.strokeOpacity)
     : (() => {
         const color = parseColor(style.stroke)
         return color
@@ -129,8 +149,10 @@ export function drawingMlStroke(
       ? '<a:bevel/>'
       : '<a:miter lim="800000"/>'
   const dash = drawingMlDash(style.dashArray, style.strokeWidth)
+  const lineEnds = drawingMlLineEnds(element, defs) ??
+    '<a:headEnd type="none"/><a:tailEnd type="none"/>'
   return `<a:ln w="${Math.max(1, Math.round(style.strokeWidth * emuPerUnit))}" cap="${cap}">` +
-    `${fill}${dash}${join}<a:headEnd type="none"/><a:tailEnd type="none"/></a:ln>`
+    `${fill}${dash}${join}${lineEnds}</a:ln>`
 }
 
 function drawingMlDash(value: string, strokeWidth: number): string {
@@ -211,10 +233,14 @@ export function parseColor(value: string): { rgb: string; alpha: number } | null
   return named ? { rgb: named, alpha: normalized === 'transparent' ? 0 : 1 } : null
 }
 
-function drawingMlGradient(element: XmlElement, opacity: number): string {
-  const stops = childElements(element).filter((child) => localName(child) === 'stop')
-  if (stops.length === 0) return '<a:noFill/>'
-  const entries = stops.map((stop, index) => {
+function drawingMlGradient(
+  element: XmlElement,
+  defs: ReadonlyMap<string, XmlElement>,
+  opacity: number
+): string {
+  const gradient = resolveGradient(element, defs)
+  if (!gradient || gradient.stops.length === 0) return '<a:noFill/>'
+  const entries = gradient.stops.map((stop, index) => {
     const inline = parseInlineStyle(stop.getAttribute('style'))
     const color = parseColor(stop.getAttribute('stop-color') || inline.get('stop-color') || '#000000')
       ?? { rgb: '000000', alpha: 1 }
@@ -222,21 +248,25 @@ function drawingMlGradient(element: XmlElement, opacity: number): string {
       stop.getAttribute('stop-opacity') || inline.get('stop-opacity') || null,
       1
     )
-    const offset = gradientOffset(stop.getAttribute('offset'), index, stops.length)
+    const offset = gradientOffset(stop.getAttribute('offset'), index, gradient.stops.length)
     return `<a:gs pos="${offset}"><a:srgbClr val="${color.rgb}">${alphaXml(
       color.alpha * opacity * stopOpacity
     )}</a:srgbClr></a:gs>`
   }).join('')
-  if (localName(element) === 'radialGradient') {
+  if (gradient.kind === 'radialGradient') {
     return `<a:gradFill rotWithShape="1"><a:gsLst>${entries}</a:gsLst>` +
       '<a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/>' +
       '</a:path></a:gradFill>'
   }
-  const x1 = coordinate(element.getAttribute('x1'), 0)
-  const y1 = coordinate(element.getAttribute('y1'), 0)
-  const x2 = coordinate(element.getAttribute('x2'), 1)
-  const y2 = coordinate(element.getAttribute('y2'), 0)
-  const angle = Math.round((((Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI + 360) % 360) * 60_000)
+  const x1 = coordinate(gradient.attribute('x1'), 0)
+  const y1 = coordinate(gradient.attribute('y1'), 0)
+  const x2 = coordinate(gradient.attribute('x2'), 1)
+  const y2 = coordinate(gradient.attribute('y2'), 0)
+  const start = applyMatrix(gradient.transform, x1, y1)
+  const end = applyMatrix(gradient.transform, x2, y2)
+  const angle = Math.round((
+    (Math.atan2(end[1] - start[1], end[0] - start[0]) * 180 / Math.PI + 360) % 360
+  ) * 60_000)
   return `<a:gradFill rotWithShape="1"><a:gsLst>${entries}</a:gsLst>` +
     `<a:lin ang="${angle}" scaled="1"/></a:gradFill>`
 }
@@ -264,21 +294,87 @@ function supportedPaint(value: string, defs: ReadonlyMap<string, XmlElement>): b
   const reference = paintReference(value)
   if (!reference) return false
   const gradient = defs.get(reference)
-  return Boolean(gradient && isSupportedGradient(gradient))
+  return Boolean(gradient && isSupportedGradient(gradient, defs))
 }
 
-function isSupportedGradient(element: XmlElement): boolean {
-  if (!isGradient(element)) return false
-  if (element.getAttribute('gradientTransform')) return false
-  if (element.getAttribute('href') || element.getAttribute('xlink:href')) return false
-  const units = element.getAttribute('gradientUnits')
-  if (units && units !== 'objectBoundingBox') return false
-  const spread = element.getAttribute('spreadMethod')
-  if (spread && spread !== 'pad') return false
-  if (localName(element) === 'radialGradient') {
-    return !['fx', 'fy', 'fr'].some((name) => element.getAttribute(name))
+function isSupportedGradient(
+  element: XmlElement,
+  defs: ReadonlyMap<string, XmlElement>
+): boolean {
+  const gradient = resolveGradient(element, defs)
+  if (!gradient || gradient.stops.length === 0 || gradient.spread !== 'pad') return false
+  if (gradient.kind === 'radialGradient') {
+    return gradient.units === 'objectBoundingBox' &&
+      !gradient.hasTransform &&
+      !['fx', 'fy', 'fr'].some((name) => gradient.attribute(name))
   }
-  return true
+  if (gradient.units === 'objectBoundingBox') return !gradient.hasTransform
+  if (gradient.units !== 'userSpaceOnUse' || !isPositiveAxisScale(gradient.transform)) {
+    return false
+  }
+  return [
+    coordinate(gradient.attribute('x1'), 0),
+    coordinate(gradient.attribute('y1'), 0),
+    coordinate(gradient.attribute('x2'), 1),
+    coordinate(gradient.attribute('y2'), 0)
+  ].every((value) => value >= 0 && value <= 1)
+}
+
+function resolveGradient(
+  element: XmlElement,
+  defs: ReadonlyMap<string, XmlElement>
+): ResolvedGradient | null {
+  if (!isGradient(element)) return null
+  const kind = localName(element) as ResolvedGradient['kind']
+  const chain: XmlElement[] = []
+  const visited = new Set<string>()
+  let current: XmlElement | undefined = element
+  while (current) {
+    if (localName(current) !== kind) return null
+    chain.push(current)
+    const href = current.getAttribute('href') || current.getAttribute('xlink:href')
+    if (!href) break
+    if (!href.startsWith('#') || href.length === 1 || visited.has(href)) return null
+    visited.add(href)
+    current = defs.get(href.slice(1))
+    if (!current) return null
+  }
+  const attribute = (name: string): string | null => {
+    for (const candidate of chain) {
+      const value = candidate.getAttribute(name)
+      if (value) return value
+    }
+    return null
+  }
+  const stops = chain
+    .map((candidate) => childElements(candidate)
+      .filter((child) => localName(child) === 'stop'))
+    .find((candidate) => candidate.length > 0) ?? []
+  const transformSource = attribute('gradientTransform')
+  let transform = IDENTITY_MATRIX
+  try {
+    transform = parseTransformList(transformSource)
+  } catch {
+    return null
+  }
+  return {
+    kind,
+    stops,
+    units: attribute('gradientUnits') ?? 'objectBoundingBox',
+    spread: attribute('spreadMethod') ?? 'pad',
+    transform,
+    hasTransform: Boolean(transformSource),
+    attribute
+  }
+}
+
+function isPositiveAxisScale(matrix: AffineMatrix): boolean {
+  const [scaleX, skewY, skewX, scaleY, translateX, translateY] = matrix
+  return scaleX > 0 && scaleY > 0 &&
+    Math.abs(skewX) < 1e-10 &&
+    Math.abs(skewY) < 1e-10 &&
+    Math.abs(translateX) < 1e-10 &&
+    Math.abs(translateY) < 1e-10
 }
 
 function supportedKeyword(value: string | null, allowed: readonly string[]): boolean {

@@ -12,6 +12,8 @@ import {
   parseTransformList,
   type AffineMatrix
 } from './matrix'
+import { drawingMlEffect } from './effects'
+import { hasLineMarkers } from './markers'
 import { pathToDrawingMlGeometry, toEmu } from './path'
 import {
   DEFAULT_SVG_STYLE,
@@ -92,6 +94,7 @@ interface ShapeGeometry {
   height: number
   xml: string
   name: string
+  transformAttributes?: string
 }
 
 interface ConvertedShape {
@@ -184,7 +187,8 @@ function processElement(
   const ownMatrix = parseTransformList(element.getAttribute('transform'))
   const matrix = multiplyMatrices(parent.matrix, ownMatrix)
   const context = { matrix, style, fromUse: parent.fromUse }
-  if (hasUnsupportedEffect(element)) {
+  const effect = drawingMlEffect(element, state.defs, state.emuPerUnit)
+  if (hasClipOrMask(element) || effect === null) {
     return retainResidual(
       element,
       countVisualLeaves(element),
@@ -223,7 +227,7 @@ function processElement(
   }
   appendNativeShape(state, {
     geometry,
-    xml: wrapShape(geometry, context.style, state),
+    xml: wrapShape(element, geometry, context.style, effect, state),
     fromUse: context.fromUse
   })
   return true
@@ -433,6 +437,9 @@ function shapeGeometry(
       : null
   }
   if (tag === 'line') {
+    if (hasLineMarkers(element)) {
+      return presentationLineGeometry(element, context.matrix, state.emuPerUnit)
+    }
     return customPath(
       `M ${finiteAttribute(element, 'x1', 0)} ${finiteAttribute(element, 'y1', 0)} ` +
         `L ${finiteAttribute(element, 'x2', 0)} ${finiteAttribute(element, 'y2', 0)}`,
@@ -452,6 +459,35 @@ function shapeGeometry(
     return customPath(path, context.matrix, state.emuPerUnit, `SVG ${tag}`)
   }
   return null
+}
+
+function presentationLineGeometry(
+  element: XmlElement,
+  matrix: AffineMatrix,
+  emuPerUnit: number
+): ShapeGeometry {
+  const first = applyMatrix(
+    matrix,
+    finiteAttribute(element, 'x1', 0),
+    finiteAttribute(element, 'y1', 0)
+  )
+  const second = applyMatrix(
+    matrix,
+    finiteAttribute(element, 'x2', 0),
+    finiteAttribute(element, 'y2', 0)
+  )
+  const minimum = 1 / emuPerUnit
+  const flipH = first[0] > second[0]
+  const flipV = first[1] > second[1]
+  return {
+    x: Math.min(first[0], second[0]),
+    y: Math.min(first[1], second[1]),
+    width: Math.max(Math.abs(second[0] - first[0]), minimum),
+    height: Math.max(Math.abs(second[1] - first[1]), minimum),
+    xml: '<a:prstGeom prst="line"><a:avLst/></a:prstGeom>',
+    name: 'SVG arrow line',
+    transformAttributes: `${flipH ? ' flipH="1"' : ''}${flipV ? ' flipV="1"' : ''}`
+  }
 }
 
 function rectangleGeometry(
@@ -542,23 +578,25 @@ function customPath(
 }
 
 function wrapShape(
+  element: XmlElement,
   geometry: ShapeGeometry,
   style: SvgStyleContext,
+  effect: string,
   state: ConversionState
 ): string {
   const id = state.nextShapeId++
   const fill = drawingMlFill(style, state.defs)
-  const stroke = drawingMlStroke(style, state.defs, state.emuPerUnit)
+  const stroke = drawingMlStroke(element, style, state.defs, state.emuPerUnit)
   return '<p:sp><p:nvSpPr>' +
     `<p:cNvPr id="${id}" name="${escapeXml(`${geometry.name} ${id}`)}"/>` +
-    '<p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm>' +
+    `<p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm${geometry.transformAttributes ?? ''}>` +
     `<a:off x="${toEmu(geometry.x, state.emuPerUnit)}" y="${toEmu(
       geometry.y,
       state.emuPerUnit
     )}"/><a:ext cx="${toEmu(geometry.width, state.emuPerUnit)}" cy="${toEmu(
       geometry.height,
       state.emuPerUnit
-    )}"/></a:xfrm>${geometry.xml}${fill}${stroke}</p:spPr></p:sp>`
+    )}"/></a:xfrm>${geometry.xml}${fill}${stroke}${effect}</p:spPr></p:sp>`
 }
 
 function groupedDrawingMl(
@@ -648,8 +686,8 @@ function collectDefs(root: XmlElement): Map<string, XmlElement> {
   return result
 }
 
-function hasUnsupportedEffect(element: XmlElement): boolean {
-  return ['clip-path', 'mask', 'filter'].some((name) => Boolean(element.getAttribute(name)))
+function hasClipOrMask(element: XmlElement): boolean {
+  return ['clip-path', 'mask'].some((name) => Boolean(element.getAttribute(name)))
 }
 
 function countVisualLeaves(element: XmlElement): number {

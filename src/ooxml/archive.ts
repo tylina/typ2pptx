@@ -154,7 +154,6 @@ function embedResidualSvg(
   const extension = slide.createElementNS(DRAWING_NS, 'a:ext')
   extension.setAttribute('uri', SVG_EXTENSION_URI)
   const svgBlip = slide.createElementNS(SVG_BLIP_NS, 'asvg:svgBlip')
-  svgBlip.setAttribute('xmlns:asvg', SVG_BLIP_NS)
   svgBlip.setAttributeNS(OFFICE_REL_NS, 'r:embed', svgRelationshipId)
   extension.appendChild(svgBlip)
   extensionList.appendChild(extension)

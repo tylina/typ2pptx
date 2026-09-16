@@ -24,11 +24,16 @@ The portable pipeline currently preserves:
   splitting ordinary prose into word-sized objects;
 - compiler-owned fixed physical lines in one wrap-disabled text box, with native soft breaks and
   exact baseline spacing when paragraph identity, line order, bounds, and alignment all agree;
+- compiler-tagged raw blocks as one copyable text object with token styling and blank lines, plus
+  compiler-tagged simple equations with native baseline offsets;
+- compiler-provided RTL direction on isolated text objects without geometry-merging bidi runs;
 - namespace-aware normalization that keeps one DrawingML paragraph-properties node for styled runs
-  and soft line breaks instead of relying on PowerPoint's repair tolerance;
+  and soft line breaks, and emits each Office SVG namespace declaration exactly once instead of
+  relying on PowerPoint's repair tolerance;
 - simple inline math as Cambria Math text and compiler-identified complex formulas as grouped curves;
 - rectangles, original PNG/JPEG/GIF images, external links, slide links, and speaker notes;
 - SVG paths, lines, polygons, ellipses, solid/linear/radial fills, opacity, strokes, and dash patterns;
+- direct SVG drop shadows and endpoint-anchored, auto-oriented `context-stroke` triangle markers;
 - compiler-provided paint order across editable objects and fallback SVG segments, plus the original
   SVG order inside every segment;
 - an SVG source plus a PNG compatibility image for each residual layer.
@@ -59,12 +64,15 @@ geometry-merges text. Proven consecutive fixed lines may share one text box with
 reflowable; unequal indentation, bounds, spacing, or alignment keeps them as independent line or
 isolated objects. Unsupported paint and transforms stay in ordered SVG/PNG layers.
 
-Focused Arial/CJK paragraph, alignment, table, explicit-spacing, and fixed-line fixtures open and
-render in real PowerPoint. The portable core is not yet declared fully equivalent: broad
-PowerPoint/LibreOffice visual-diff fixtures, native-paragraph editing across fonts, indentation, RTL,
-and arrows/effects remain parity gates. Editable output intentionally permits native PowerPoint line
-reflow; use Visual output when pixel fidelity is the primary requirement. Unsupported content stays
-visible rather than being silently discarded or falsely reported as editable.
+Focused Arial/CJK paragraph, alignment, table, explicit-spacing, fixed-line, raw, simple-equation,
+hanging-indent, and isolated RTL fixtures open and render in real PowerPoint. A 31-page Touying
+fixture also opens without repair and exports through PowerPoint. The portable core is not yet
+declared fully equivalent: broad PowerPoint/LibreOffice visual-diff fixtures, native-paragraph editing
+across fonts, complex bidi, and broader arrows/effects remain parity gates. Unsupported blur, marker,
+filter, clip, or paint semantics remain ordered SVG/PNG residual layers. Editable output
+intentionally permits native PowerPoint line reflow; use Visual output when pixel fidelity is the
+primary requirement. Unsupported content stays visible rather than being silently discarded or
+falsely reported as editable.
 
 ## Features
 

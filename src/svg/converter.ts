@@ -31,6 +31,9 @@ const MAX_NATIVE_SHAPES = 100_000
 const MAX_PAINT_LAYERS = 512
 const MAX_RESIDUAL_LAYER_BYTES = 64 * 1024 * 1024
 const RESIDUAL_LAYER_ATTRIBUTE = 'data-typ2pptx-residual-layer'
+// PowerPoint ignores a fully transparent fill during edit-mode hit testing.
+// 100 / 100_000 is 0.1% opacity: visually inert, but still selectable.
+const GROUP_HIT_AREA_ALPHA = 100
 const NON_VISUAL_TAGS = new Set([
   'defs', 'title', 'desc', 'metadata', 'style', 'linearGradient', 'radialGradient',
   'stop', 'clipPath', 'mask', 'filter', 'symbol'
@@ -646,10 +649,16 @@ function wrapGroup(
   shapes: readonly ConvertedShape[],
   state: ConversionState
 ): string {
-  const left = Math.min(...shapes.map((shape) => shape.geometry.x))
-  const top = Math.min(...shapes.map((shape) => shape.geometry.y))
-  const right = Math.max(...shapes.map((shape) => shape.geometry.x + shape.geometry.width))
-  const bottom = Math.max(...shapes.map((shape) => shape.geometry.y + shape.geometry.height))
+  const left = Math.min(group.x, ...shapes.map((shape) => shape.geometry.x))
+  const top = Math.min(group.y, ...shapes.map((shape) => shape.geometry.y))
+  const right = Math.max(
+    group.x + group.width,
+    ...shapes.map((shape) => shape.geometry.x + shape.geometry.width)
+  )
+  const bottom = Math.max(
+    group.y + group.height,
+    ...shapes.map((shape) => shape.geometry.y + shape.geometry.height)
+  )
   const x = toEmu(left, state.emuPerUnit)
   const y = toEmu(top, state.emuPerUnit)
   const width = Math.max(1, toEmu(right - left, state.emuPerUnit))
@@ -660,7 +669,22 @@ function wrapGroup(
     '<p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm>' +
     `<a:off x="${x}" y="${y}"/><a:ext cx="${width}" cy="${height}"/>` +
     `<a:chOff x="${x}" y="${y}"/><a:chExt cx="${width}" cy="${height}"/>` +
-    `</a:xfrm></p:grpSpPr>${shapes.map((shape) => shape.xml).join('')}</p:grpSp>`
+    `</a:xfrm></p:grpSpPr>${groupHitArea(group, state)}` +
+    `${shapes.map((shape) => shape.xml).join('')}</p:grpSp>`
+}
+
+function groupHitArea(group: SvgVectorGroup, state: ConversionState): string {
+  const id = state.nextShapeId++
+  return '<p:sp><p:nvSpPr>' +
+    `<p:cNvPr id="${id}" name="${escapeXml(`Typst ${group.kind} hit area ${group.id}`)}"/>` +
+    '<p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm>' +
+    `<a:off x="${toEmu(group.x, state.emuPerUnit)}" ` +
+    `y="${toEmu(group.y, state.emuPerUnit)}"/>` +
+    `<a:ext cx="${toEmu(group.width, state.emuPerUnit)}" ` +
+    `cy="${toEmu(group.height, state.emuPerUnit)}"/>` +
+    '</a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
+    `<a:solidFill><a:srgbClr val="FFFFFF"><a:alpha val="${GROUP_HIT_AREA_ALPHA}"/>` +
+    '</a:srgbClr></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>'
 }
 
 function validateVectorGroup(group: SvgVectorGroup): void {

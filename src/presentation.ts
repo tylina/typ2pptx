@@ -7,6 +7,7 @@ import type {
   PresentationFallbackLayer,
   PresentationImageElement,
   PresentationLinkElement,
+  PresentationPageBackground,
   PresentationPageModel,
   PresentationRectangleElement,
   PresentationSlideLinkElement,
@@ -76,6 +77,7 @@ export async function createEditablePptx(
 
   for (const [pageOffset, page] of pages.entries()) {
     const slide = pptx.addSlide()
+    await addPageBackground(request, slide, page)
     const vectorLayers: SlideArchivePatch['vectorLayers'] = []
     const residualLayers: SlideArchivePatch['residualLayers'] = []
     const paintLayers = orderedPaintLayers(page)
@@ -175,6 +177,35 @@ export async function createEditablePptx(
     nativeVectorShapeCount,
     warnings: [...warnings]
   }
+}
+
+async function addPageBackground(
+  request: EditablePresentationRequest,
+  slide: PptxGenJS.Slide,
+  page: PresentationPageModel
+): Promise<void> {
+  const background = page.background
+  if (!background) return
+  if (background.kind === 'solid') {
+    slide.background = { color: cleanHexColor(background.color) }
+    return
+  }
+  const pngBase64 = await rasterizeBackgroundSvg(request, background, page.width, page.height)
+  assertPng(pngBase64)
+  slide.background = {
+    data: `data:image/png;base64,${pngBase64}`,
+    path: `typ2pptx-background-${page.pageIndex + 1}.png`
+  }
+}
+
+async function rasterizeBackgroundSvg(
+  request: EditablePresentationRequest,
+  background: Extract<PresentationPageBackground, { kind: 'svg' }>,
+  width: number,
+  height: number
+): Promise<string> {
+  const rasterizer = request.residualSvgRasterizer ?? rasterizeSvgToPngBase64
+  return rasterizer({ svg: background.svg, width, height })
 }
 
 async function rasterizeResidualSvg(

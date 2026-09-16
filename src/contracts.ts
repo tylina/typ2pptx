@@ -94,10 +94,16 @@ export interface PresentationFallbackLayer {
   svg: string
 }
 
+export type PresentationPageBackground =
+  | { kind: 'solid'; color: string }
+  | { kind: 'svg'; svg: string }
+
 export interface PresentationPageModel {
   pageIndex: number
   width: number
   height: number
+  /** Compiler-owned page paint. It is emitted as a non-selectable slide background. */
+  background?: PresentationPageBackground | null
   fallbackLayers: PresentationFallbackLayer[]
   elements: PresentationEditableElement[]
   vectorGroups?: PresentationVectorGroup[]

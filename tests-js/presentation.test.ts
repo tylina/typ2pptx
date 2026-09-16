@@ -135,6 +135,61 @@ describe('browser-compatible editable presentation writer', () => {
     expect(result.fallbackShapeCount).toBe(0)
   })
 
+  test('emits compiler page paint as a non-selectable slide background', async () => {
+    let rasterizations = 0
+    const result = await createEditablePptx({
+      title: 'Slide backgrounds',
+      residualSvgRasterizer: async ({ svg }) => {
+        rasterizations += 1
+        expect(svg).toContain('linearGradient')
+        return PNG_1X1_ALT
+      },
+      model: {
+        pages: [{
+          pageIndex: 0,
+          width: 100,
+          height: 60,
+          background: { kind: 'solid', color: '#fefefe' },
+          fallbackLayers: [],
+          elements: [],
+          fallbackTextCount: 0,
+          fallbackShapeCount: 0
+        }, {
+          pageIndex: 1,
+          width: 100,
+          height: 60,
+          background: {
+            kind: 'svg',
+            svg: '<svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g"/></defs></svg>'
+          },
+          fallbackLayers: [],
+          elements: [],
+          fallbackTextCount: 0,
+          fallbackShapeCount: 0
+        }],
+        fonts: [],
+        editableTextCount: 0,
+        editableShapeCount: 0,
+        fallbackTextCount: 0,
+        fallbackShapeCount: 0,
+        warnings: []
+      }
+    })
+    const files = unzipSync(result.bytes)
+    const solidSlide = strFromU8(files['ppt/slides/slide1.xml'])
+    const vectorSlide = strFromU8(files['ppt/slides/slide2.xml'])
+
+    expect(solidSlide).toContain('<p:bg><p:bgPr><a:solidFill><a:srgbClr val="FEFEFE"')
+    expect(solidSlide).not.toContain('<p:sp>')
+    expect(vectorSlide).toContain('<p:bg><p:bgPr><a:blipFill')
+    expect(vectorSlide).not.toContain('<p:pic>')
+    expect(rasterizations).toBe(1)
+    expect(Object.entries(files).some(([name, bytes]) =>
+      name.startsWith('ppt/media/') &&
+      name.endsWith('.png') &&
+      Buffer.from(bytes).equals(Buffer.from(PNG_1X1_ALT, 'base64')))).toBe(true)
+  })
+
   test('keeps residual pictures and native geometry in original SVG paint order', async () => {
     const result = await createEditablePptx({
       title: 'Layered deck',

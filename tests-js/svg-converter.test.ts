@@ -195,6 +195,11 @@ describe('portable SVG to DrawingML conversion', () => {
     expect(result.nativeShapeCount).toBe(3)
     expect(result.drawingMl).toContain('<p:grpSp>')
     expect(result.drawingMl).toContain('Typst math formula-1')
+    expect(result.drawingMl).toContain('Typst math hit area formula-1')
+    expect(result.drawingMl).toContain('<a:alpha val="100"/>')
+    expect(result.drawingMl.indexOf('Typst math hit area formula-1')).toBeLessThan(
+      result.drawingMl.indexOf('SVG path')
+    )
     expect(result.drawingMl.indexOf('<p:grpSp>')).toBeLessThan(
       result.drawingMl.indexOf('SVG rectangle')
     )
